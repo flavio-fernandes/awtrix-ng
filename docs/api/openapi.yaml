@@ -131,6 +131,11 @@ paths:
         any failure aborts the flash and frees the slot. On success the device
         answers `200 {"ok":true}` and then reboots into the new image. Rejected
         with `403 forbidden` while the device is in AP/provisioning mode.
+
+        A build without browser update answers `503 unavailable` instead, like
+        every feature it leaves out: the Pico (Galactic Unicorn) builds take a
+        UF2 over USB in BOOTSEL mode. The desktop simulator has no firmware to
+        replace and answers `501 notSupported`.
       requestBody:
         required: true
         content:
@@ -147,6 +152,20 @@ paths:
           description: >
             Flash failed - image too large for the OTA slot, short write, or a
             bad image.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "501":
+          description: >
+            `notSupported` - the desktop simulator, which has no firmware to
+            update.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: >
+            `unavailable` - a build without browser update (the Pico builds):
+            flash a UF2 over USB (BOOTSEL) instead.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -2562,7 +2581,9 @@ components:
             always ≤ freeHeapBytes. The script install and TLS-fetch guards refuse
             on this number, not on total free: a compile or an mbedtls handshake
             needs its buffers in one piece. The gap to freeHeapBytes is
-            fragmentation.
+            fragmentation. On the Pico it is the free block at the top of the
+            heap (its allocator cannot list the holes further down), so the true
+            largest block can only be larger.
         psramTotalBytes:
           type: integer
           description: |
