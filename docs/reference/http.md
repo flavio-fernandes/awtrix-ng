@@ -1852,6 +1852,8 @@ network, and what the web UI uses. Auth is re-checked inside the upload handler.
 | 401 | auth failed |
 | 403 | `forbidden` - firmware upload is disabled in AP/provisioning mode |
 | 500 | `internalError`, `firmware update failed (bad image or storage full)` - the OTA slot could not be written |
+| 501 | `notSupported` - the desktop simulator, which has no firmware to update |
+| 503 | `unavailable` - a build without browser update, like the Pico (Galactic Unicorn) builds; flash a UF2 over USB (BOOTSEL) instead |
 
 The image is size-checked against the free firmware slot before any byte is written, and a refused
 image never replaces the running one: AWTRIX switches slots only after a whole image has arrived
