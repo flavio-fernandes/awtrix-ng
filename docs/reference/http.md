@@ -177,7 +177,7 @@ Device state and statistics. `200`, or `401` when a login is enabled and the req
 | `psramTotalBytes` | integer | bytes | external PSRAM; absent on boards without it |
 | `psramFreeBytes` | integer | bytes | free PSRAM; never add it to `freeHeapBytes` - see [Device state](device.md) |
 | `scriptingRunning` | boolean | - | whether scripts run at all; `false` while `scriptingEnabled` is off |
-| `scriptHeapPool` | string | - | pool the Berry VM allocates from: `internal` or `psram` |
+| `scriptHeapPool` | string | - | pool the Berry VM allocates from: `internal` or `psram`; `unavailable` in a build without scripting |
 | `scriptHeapBudgetBytes` | integer | bytes | ceiling on the shared Berry heap before installs are refused |
 | `fps` | integer | frames/s | measured render-loop rate |
 | `brightness` | integer | 0–255 | **effective** brightness after auto-brightness, not the setting |
@@ -1852,6 +1852,8 @@ network, and what the web UI uses. Auth is re-checked inside the upload handler.
 | 401 | auth failed |
 | 403 | `forbidden` - firmware upload is disabled in AP/provisioning mode |
 | 500 | `internalError`, `firmware update failed (bad image or storage full)` - the OTA slot could not be written |
+| 501 | `notSupported` - the desktop simulator, which has no firmware to update |
+| 503 | `unavailable` - a build without browser update, like the Pico (Galactic Unicorn) builds; flash a UF2 over USB (BOOTSEL) instead |
 
 The image is size-checked against the free firmware slot before any byte is written, and a refused
 image never replaces the running one: AWTRIX switches slots only after a whole image has arrived
@@ -2088,7 +2090,3 @@ is 22. Battery, piezo buzzer and DFPlayer pins are -1. `pinMatrix: -1` and an
 empty `gpio.matrix` list denote a fixed PIO panel, not a disabled display; panel
 pins 13-20 are reserved, never user-routable. Any change to the default pin set
 (including enabling DFPlayer) is refused. Existing ESP32 pin rules are unchanged.
-
-The Pico bootstrap compiles this contract but has no live HTTP/MQTT transports
-yet. Live verification belongs to the networking integration; the host policy
-tests are not a claim that a Pico currently serves these endpoints.
