@@ -4,6 +4,7 @@
 #if defined(AWTRIX_PLATFORM_RP2040)
 #include <LEAmDNS.h>
 #include <pico/cyw43_arch.h>
+#include "platform/rp2040/RadioStartup.h"
 #include "platform/rp2040/WifiCompat.h"
 #else
 #include <ESPmDNS.h>
@@ -34,12 +35,9 @@ unsigned long joinTimeoutMs(const DeviceConfig& cfg) {
 }
 
 #if defined(AWTRIX_PLATFORM_RP2040)
-// Pico join bookkeeping. A pinned join (strongest BSSID from a scan) that fails is followed by an
-// unpinned one, so a scan quirk or a hidden SSID can never lock the device out.
+// Pico join bookkeeping: begin() does not block, so a join is only restarted once it timed out.
 unsigned long lastJoinMs = 0;
 bool joinedBefore = false;
-bool pinNextJoin = true;
-platform::pico::JoinResult lastJoin;
 // CYW43 has one radio: while the provisioning AP is up the station can only join on the AP's
 // channel, so a join from AP_STA fails unless the router happens to use it. The Pico drops the AP
 // for one join window instead, and less often than ESP32 retries.
@@ -58,35 +56,62 @@ const char* cyw43LinkName(int link) {
   }
 }
 
-// A pinned join (strongest BSSID) that has not connected after half the timeout gets the other half
-// as an unpinned join, so an AP that refuses the Pico can never cost the whole attempt.
-bool pinnedJoinStalled(unsigned long nowMs, unsigned long timeoutMs) {
-  return lastJoin.pinned && WiFi.status() != WL_CONNECTED && nowMs - lastJoinMs >= timeoutMs / 2;
+// The driver's view of every join, deauth and key exchange, so a dropped link says why.
+void logRadioEvents() {
+  static uint32_t reportedDropped = 0;
+  platform::RadioEvent e;
+  uint32_t dropped = 0;
+  bool sawLinkUp = false;
+  uint8_t linkAp[6] = {};
+  while (platform::takeRadioEvent(e, dropped)) {
+    if (e.type == CYW43_EV_LINK && e.status == 0 && (e.flags & 1) && e.itf == CYW43_ITF_STA) {
+      sawLinkUp = true;
+      memcpy(linkAp, e.addr, sizeof linkAp);
+    }
+    const char* name = platform::radioEventName(e.type);
+    char unknown[16];
+    if (name == nullptr) {
+      snprintf(unknown, sizeof unknown, "type %lu", static_cast<unsigned long>(e.type));
+      name = unknown;
+    }
+    logf("wifi: cyw43 %s status %lu reason %lu from %02x:%02x:%02x:%02x:%02x:%02x "
+         "(itf %u, join state 0x%04lx, t=%lu ms)", name, static_cast<unsigned long>(e.status),
+         static_cast<unsigned long>(e.reason), e.addr[0], e.addr[1], e.addr[2], e.addr[3],
+         e.addr[4], e.addr[5], e.itf, static_cast<unsigned long>(e.joinState),
+         static_cast<unsigned long>(e.ms));
+  }
+  // Which AP the link came up on. WiFi.BSSID()/RSSI() read nothing until lwIP has an address, so
+  // the AP comes from the event and the RSSI from the driver.
+  if (sawLinkUp) {
+    int32_t rssi = 0;
+    cyw43_wifi_get_rssi(&cyw43_state, &rssi);
+    logf("wifi: link up via %02x:%02x:%02x:%02x:%02x:%02x (%ld dBm, roam_off %d)", linkAp[0],
+         linkAp[1], linkAp[2], linkAp[3], linkAp[4], linkAp[5], static_cast<long>(rssi),
+         platform::firmwareRoamOff());
+  }
+  if (dropped != reportedDropped) {
+    logf("wifi: %lu cyw43 events not logged (buffer full)",
+         static_cast<unsigned long>(dropped - reportedDropped));
+    reportedDropped = dropped;
+  }
 }
 
-void logPinnedFailure() {
-  const int link = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);
-  const uint8_t* b = lastJoin.bssid;
-  logf("wifi: %02x:%02x:%02x:%02x:%02x:%02x did not accept the join (cyw43 link %d, %s); "
-       "letting the radio choose", b[0], b[1], b[2], b[3], b[4], b[5], link, cyw43LinkName(link));
-}
 #endif
 
 void joinStation(const DeviceConfig& cfg, bool apMode) {
 #if defined(AWTRIX_PLATFORM_RP2040)
-  const auto r = platform::pico::join(WiFi, apMode ? WIFI_AP_STA : WIFI_STA,
-                                      cfg.wifiSsid.c_str(), cfg.wifiPass.c_str(), pinNextJoin);
+  // Before every join: begin() can bring the radio back up with firmware defaults.
+  static int loggedRoamOff = -2;
+  const int roamOff = platform::disableFirmwareRoaming();
+  if (roamOff != loggedRoamOff) {
+    logf("wifi: firmware roaming %s (roam_off %d)", roamOff == 1 ? "off" : "NOT off", roamOff);
+    loggedRoamOff = roamOff;
+  }
+  logf("wifi: joining \"%s\"", cfg.wifiSsid.c_str());
+  platform::pico::join(WiFi, apMode ? WIFI_AP_STA : WIFI_STA, cfg.wifiSsid.c_str(),
+                       cfg.wifiPass.c_str());
   lastJoinMs = millis();
   joinedBefore = true;
-  lastJoin = r;
-  if (r.pinned)
-    logf("wifi: joining \"%s\" via %02x:%02x:%02x:%02x:%02x:%02x (%d dBm, strongest AP)",
-         cfg.wifiSsid.c_str(), r.bssid[0], r.bssid[1], r.bssid[2], r.bssid[3], r.bssid[4],
-         r.bssid[5], r.rssi);
-  else
-    logf("wifi: joining \"%s\" (%s)", cfg.wifiSsid.c_str(),
-         pinNextJoin ? "not seen in scan" : "unpinned retry");
-  pinNextJoin = !r.pinned;
 #else
   WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
 #endif
@@ -169,10 +194,7 @@ void NetworkService::begin(const DeviceConfig& cfg, bool forceAp,
     // the matrix does not look frozen.
     while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
 #if defined(AWTRIX_PLATFORM_RP2040)
-      if (pinnedJoinStalled(millis(), timeoutMs)) {
-        logPinnedFailure();
-        joinStation(cfg, false);
-      }
+      logRadioEvents();
 #endif
       if (onWait) onWait();
       delay(10);
@@ -228,6 +250,7 @@ void NetworkService::startAp(const char* why) {
 
 void NetworkService::tick() {
 #if defined(AWTRIX_PLATFORM_RP2040)
+  logRadioEvents();
   if (!apMode_) MDNS.update();
 #endif
   if (apMode_) {
@@ -255,9 +278,6 @@ void NetworkService::tick() {
     if (status_) net::noteWifiRetry(*status_, kCheckMs);
     return;
   }
-#if defined(AWTRIX_PLATFORM_RP2040)
-  pinNextJoin = true;
-#endif
   roamIfWeak(nowMs);
 }
 
@@ -286,20 +306,17 @@ void NetworkService::retryJoinFromAp() {
   if (!cfg_ || cfg_->wifiSsid.empty()) return;
 #if defined(AWTRIX_PLATFORM_RP2040)
   const unsigned long nowMs = millis();
+  if (restartPending_) return;
   if (apPaused_) {
     if (WiFi.status() == WL_CONNECTED) {
       logf("wifi: joined \"%s\" from provisioning mode, restarting to leave the AP",
            WiFi.SSID().c_str());
+      // The reboot is scheduled, not immediate; ask once.
+      restartPending_ = true;
       if (onJoinedFromAp_) onJoinedFromAp_();
       return;
     }
-    const unsigned long timeoutMs = joinTimeoutMs(*cfg_);
-    if (pinnedJoinStalled(nowMs, timeoutMs)) {
-      logPinnedFailure();
-      joinStation(*cfg_, false);
-      return;
-    }
-    if (nowMs - lastJoinMs < timeoutMs) return;
+    if (nowMs - lastJoinMs < joinTimeoutMs(*cfg_)) return;
     apPaused_ = false;
     lastApRetryMs_ = nowMs;
     const int link = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);

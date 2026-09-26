@@ -58,38 +58,15 @@ void station_reconnect_uses_stored_credentials() {
   TEST_ASSERT_EQUAL_STRING("saved", w.ssid.c_str());
   TEST_ASSERT_TRUE(w.password.empty());
 }
-void join_pins_the_strongest_bssid_of_the_same_ssid() {
+void join_never_pins_a_bssid_or_scans() {
+  // Pinned joins ("join" iovar) were refused by an eero node that plain joins reached; no pinning.
   Wifi w;
-  w.air = {ap("home", -86, 1), ap("neighbour", -40, 2), ap("home", -52, 3), ap("home", -70, 4)};
-  const auto r = awtrix::platform::pico::join(w, Wifi::Sta, "home", "pw");
-  TEST_ASSERT_TRUE(r.pinned);
-  TEST_ASSERT_EQUAL(-52, r.rssi);
-  TEST_ASSERT_NOT_NULL(w.pinned);
-  TEST_ASSERT_EQUAL(3, w.pinnedCopy[5]);  // not the far AP, not the stronger foreign SSID
-  TEST_ASSERT_EQUAL(1, w.scans); TEST_ASSERT_EQUAL(1, w.scanDeletes);
-  TEST_ASSERT_EQUAL(1, w.powerSaveOffs);  // ESP32 parity: no Wi-Fi power save
-}
-void join_falls_back_to_unpinned_when_the_ssid_is_not_seen() {
-  Wifi w;
-  w.air = {ap("neighbour", -40, 2)};  // hidden or out of range
-  const auto r = awtrix::platform::pico::join(w, Wifi::Sta, "home", "pw");
-  TEST_ASSERT_FALSE(r.pinned);
+  w.air = {ap("home", -86, 1), ap("home", -52, 3)};
+  awtrix::platform::pico::join(w, Wifi::Sta, "home", "pw");
   TEST_ASSERT_NULL(w.pinned);
-  TEST_ASSERT_EQUAL(1, w.joins);
-  TEST_ASSERT_EQUAL_STRING("home", w.ssid.c_str());
-}
-void unpinned_join_skips_the_scan() {
-  Wifi w;
-  w.air = {ap("home", -52, 3)};
-  const auto r = awtrix::platform::pico::join(w, Wifi::Sta, "home", "pw", false);
-  TEST_ASSERT_FALSE(r.pinned);
   TEST_ASSERT_EQUAL(0, w.scans);
-  TEST_ASSERT_NULL(w.pinned);
-}
-void ssid_match_is_exact() {
-  Wifi w;
-  w.air = {ap("home-guest", -30, 5), ap("hom", -30, 6)};
-  TEST_ASSERT_FALSE(awtrix::platform::pico::join(w, Wifi::Sta, "home", "pw").pinned);
+  TEST_ASSERT_EQUAL(1, w.joins);
+  TEST_ASSERT_EQUAL(1, w.powerSaveOffs);  // ESP32 parity: no Wi-Fi power save
 }
 void a_join_in_progress_is_not_restarted_before_its_timeout() {
   using awtrix::platform::pico::joinDue;
@@ -113,10 +90,7 @@ int main() {
   RUN_TEST(static_ip_uses_pico_order_and_both_dns_servers);
   RUN_TEST(repeated_ap_retries_preserve_portal_mode_and_credentials);
   RUN_TEST(station_reconnect_uses_stored_credentials);
-  RUN_TEST(join_pins_the_strongest_bssid_of_the_same_ssid);
-  RUN_TEST(join_falls_back_to_unpinned_when_the_ssid_is_not_seen);
-  RUN_TEST(unpinned_join_skips_the_scan);
-  RUN_TEST(ssid_match_is_exact);
+  RUN_TEST(join_never_pins_a_bssid_or_scans);
   RUN_TEST(a_join_in_progress_is_not_restarted_before_its_timeout);
   RUN_TEST(default_ap_and_mdns_share_mac_suffix);
   return UNITY_END();
