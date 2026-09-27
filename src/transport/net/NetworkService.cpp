@@ -85,7 +85,7 @@ void logRadioEvents() {
       snprintf(unknown, sizeof unknown, "type %lu", static_cast<unsigned long>(e.type));
       name = unknown;
     }
-    logf("wifi: cyw43 %s status %lu reason %lu from %02x:%02x:%02x:%02x:%02x:%02x "
+    logdbg("wifi: cyw43 %s status %lu reason %lu from %02x:%02x:%02x:%02x:%02x:%02x "
          "(itf %u, join state 0x%04lx, t=%lu ms)", name, static_cast<unsigned long>(e.status),
          static_cast<unsigned long>(e.reason), e.addr[0], e.addr[1], e.addr[2], e.addr[3],
          e.addr[4], e.addr[5], e.itf, static_cast<unsigned long>(e.joinState),

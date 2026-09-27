@@ -47,7 +47,7 @@
 // Feature macros describe this build, not a claim that a runtime service exists.
 static_assert(!AWTRIX_FEATURE_SCRIPTING && !AWTRIX_FEATURE_MP3 &&
               !AWTRIX_FEATURE_RADIO && !AWTRIX_FEATURE_OUTBOUND_TLS &&
-              !AWTRIX_FEATURE_BROWSER_OTA, "Pico skeleton must not enable unsupported services");
+              !AWTRIX_FEATURE_BROWSER_OTA, "Pico build must not enable unsupported services");
 
 namespace {
 using namespace awtrix;
