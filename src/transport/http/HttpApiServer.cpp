@@ -49,6 +49,7 @@
 #include "system/HeapProbe.h"
 #include "transport/http/UpdateImage.h"
 #include "system/Log.h"
+#include "system/Watchdog.h"
 #include "transport/DeviceStateJson.h"
 #include "transport/http/WebUiAsset.h"
 
@@ -85,6 +86,98 @@ class RawWebServer : public WebServer {
   using WebServer::WebServer;
 #if defined(AWTRIX_PLATFORM_RP2040)
   void setRawReadTimeout(unsigned long ms) { client().Stream::setTimeout(ms); }
+
+  // WebServer parses the request line and headers, and reads a small body, with blocking reads
+  // that wait up to 5 s per byte, so a client trickling them could hold loop() past the 8 s
+  // watchdog. The parser runs only once the header is buffered up to its blank line (or the
+  // peek window is full) and, for a body small enough to be read in one piece, the whole body
+  // too. A client that has not got that far within HTTP_MAX_DATA_WAIT is dropped, as a silent
+  // one is. Larger bodies arrive through the raw and upload callbacks, which feed the watchdog.
+  // WebServer would parse a request in the same pass that accepts it, before this check could
+  // run, so a connection is accepted here and handed to WebServer on a later pass.
+  void handleClient() override {
+    if (_currentStatus == HC_NONE) {
+      WiFiClient accepted = getServer().accept();
+      if (!accepted) return;
+      delete _currentClient;
+      _currentClient = new WiFiClient(accepted);
+      _currentStatus = HC_WAIT_READ;
+      _statusChange = millis();
+      return;
+    }
+    if (_currentStatus == HC_WAIT_READ && _currentClient && _currentClient->available() &&
+        !requestBuffered()) {
+      if (millis() - _statusChange > HTTP_MAX_DATA_WAIT) {
+        // Closed and released here: its unread bytes would bring it straight back to this check.
+        _currentClient->stop();
+        delete _currentClient;
+        _currentClient = nullptr;
+        _currentStatus = HC_NONE;
+      }
+      return;
+    }
+    WebServer::handleClient();
+  }
+
+ protected:
+  // Every response byte, headers included, goes through these two. A plain write() keeps going
+  // for as long as a slow reader drains a little every few seconds, which can outlast the
+  // watchdog; write only what the send buffer has room for and feed the watchdog while waiting.
+  // A client that takes nothing for HTTP_MAX_SEND_WAIT is given up on, as WebServer would.
+  size_t _currentClientWrite(const char* b, size_t l) override { return writeFed(b, l); }
+  size_t _currentClientWrite_P(PGM_P b, size_t l) override { return writeFed(b, l); }
+
+ private:
+  static constexpr size_t kPeekBytes = 1536;
+  static constexpr size_t kWriteSliceBytes = 1460; // one TCP segment
+
+  bool requestBuffered() {
+    char peek[kPeekBytes];
+    // peekBytes() waits for as many bytes as it is asked for, so ask only for what has arrived.
+    const size_t buffered = static_cast<size_t>(_currentClient->available());
+    const size_t n = _currentClient->peekBytes(peek, std::min(buffered, sizeof(peek)));
+    if (n == sizeof(peek)) return true;
+    size_t header = 0;
+    for (size_t i = 3; i < n && !header; ++i)
+      if (peek[i - 3] == '\r' && peek[i - 2] == '\n' && peek[i - 1] == '\r' && peek[i] == '\n')
+        header = i + 1;
+    if (!header) return false;
+    const long body = contentLength(peek, header);
+    return body <= 0 || body > kArenaBodyThresholdBytes ||
+           static_cast<size_t>(_currentClient->available()) >= header + static_cast<size_t>(body);
+  }
+
+  static long contentLength(const char* h, size_t len) {
+    static const char kName[] = "\ncontent-length:";
+    const size_t k = sizeof(kName) - 1;
+    for (size_t i = 0; i + k <= len; ++i) {
+      size_t j = 0;
+      while (j < k && tolower(static_cast<unsigned char>(h[i + j])) == kName[j]) ++j;
+      if (j == k) return strtol(h + i + k, nullptr, 10);
+    }
+    return 0;
+  }
+
+  size_t writeFed(const char* b, size_t l) {
+    size_t done = 0;
+    unsigned long progress = millis();
+    while (done < l && _currentClient->connected()) {
+      watchdog::feed();
+      const int room = _currentClient->availableForWrite();
+      if (room > 0) {
+        const size_t n = _currentClient->write(
+            b + done, std::min({l - done, static_cast<size_t>(room), kWriteSliceBytes}));
+        if (n) {
+          done += n;
+          progress = millis();
+          continue;
+        }
+      }
+      if (millis() - progress > HTTP_MAX_SEND_WAIT) break;
+      delay(1);
+    }
+    return done;
+  }
 #else
   void setRawReadTimeout(unsigned long ms) { _currentClient.Stream::setTimeout(ms); }
 
@@ -304,6 +397,9 @@ std::string uploadPartPath(const std::string& path) { return path + ".part"; }
 // Runs once per chunk of the multipart body. Failures are only recorded in the upload* flags here;
 // handleFileUploadDone turns them into a status code afterwards.
 void HttpApiServer::handleFileUpload() {
+  // Every chunk arrives inside one loop() pass, refused uploads included (a disabled route still
+  // has to read the whole body before it can answer); a slow client must not trip the watchdog.
+  watchdog::feed();
   if (featurePolicy(platform::buildFeatures(), std::string(server_->uri().c_str())) ==
       DispatchResult::Unavailable) return;
   HTTPUpload& up = server_->upload();
@@ -410,6 +506,7 @@ void HttpApiServer::handleFileUploadDone() {
 // The backup zip is piped chunk by chunk through the reader and applier straight onto the
 // filesystem; there is nowhere near enough heap to hold the archive.
 void HttpApiServer::handleRestoreUpload() {
+  watchdog::feed(); // see handleFileUpload()
   HTTPUpload& up = server_->upload();
   if (up.status == UPLOAD_FILE_START) {
     restoreStarted_ = false;
@@ -464,6 +561,7 @@ void HttpApiServer::dropRawBody() {
 // Called by WebServer for every raw-body chunk. Script sources use a second arena that is
 // allocated at RAW_START and released again on completion, since it dwarfs the fixed body arena.
 void HttpApiServer::collectBody(HttpServerBase& server, const String& uri, HTTPRaw& raw) {
+  watchdog::feed(); // a script source arrives inside one loop() pass too; see handleFileUpload()
   const std::string method = methodName(server.method());
   const std::string path = uri.c_str();
   const bool rawSource = api::isRawBodyWrite(method, path);
@@ -528,6 +626,7 @@ void HttpApiServer::scanImageMarker(const uint8_t* buf, size_t len) {
 }
 
 void HttpApiServer::handleUpdateUpload() {
+  watchdog::feed(); // see handleFileUpload()
   if (!platform::buildFeatures().browserOta) return;
   HTTPUpload& up = server_->upload();
   if (apMode_) return;
@@ -629,7 +728,9 @@ void HttpApiServer::handleUpdateDone() {
   engine_->execute(Command(CommandType::Reboot));
 }
 #else
-void HttpApiServer::handleUpdateUpload() {}
+void HttpApiServer::handleUpdateUpload() {
+  watchdog::feed(); // the refused image is still read to the end; see handleFileUpload()
+}
 void HttpApiServer::handleUpdateDone() {
   addCorsHeaders(false);
   sendError(503, "unavailable", "browser update is unavailable; flash a UF2 over USB (BOOTSEL)");
@@ -842,6 +943,25 @@ bool HttpApiServer::rejectedByPolicy(const Request& req) {
   return false;
 }
 
+// streamFile() writes straight to the client, past the Pico's fed writes, so there a file goes out
+// through sendContent() in pieces instead. Other boards keep streamFile().
+namespace {
+void sendFile(WebServer& server, File& f, const char* type) {
+#if defined(AWTRIX_PLATFORM_RP2040)
+  server.setContentLength(f.size());
+  server.send(200, type, "");
+  char buf[1024];
+  while (server.client().connected()) {
+    const size_t n = f.read(reinterpret_cast<uint8_t*>(buf), sizeof(buf));
+    if (n == 0) break;
+    server.sendContent(buf, n);
+  }
+#else
+  server.streamFile(f, type);
+#endif
+}
+}
+
 // The web UI is a gzip blob in flash, sent verbatim without decompressing. The ETag never changes
 // within a build, so a repeat visit costs a 304 instead of the whole transfer.
 bool HttpApiServer::serveWebUi(const Request& req) {
@@ -891,7 +1011,7 @@ bool HttpApiServer::serveAsset(const Request& req) {
     server_->send(304, "text/plain", "");
     return true;
   }
-  server_->streamFile(f, mimeFor(req.path));
+  sendFile(*server_, f, mimeFor(req.path));
   f.close();
   return true;
 }
