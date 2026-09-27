@@ -36,10 +36,10 @@ def survey(args, width, height):
     out.mkdir(parents=True, exist_ok=True)
     base = f'http://127.0.0.1:{args.port}'
 
-    def http(path, body=None):
+    def http(path, body=None, method=None):
         request = urllib.request.Request(base + '/api/v1/' + path,
             data=None if body is None else json.dumps(body).encode(),
-            headers={'Content-Type': 'application/json'})
+            headers={'Content-Type': 'application/json'}, method=method)
         with urllib.request.urlopen(request, timeout=3) as response:
             return json.load(response)
 
@@ -63,8 +63,8 @@ def survey(args, width, height):
                             raise RuntimeError('simulator readiness timeout')
                         time.sleep(.1)
                 for effect in effects:
-                    http('notify/dismiss', {})
-                    http('notify', {'name': 'effect-survey', 'text': '', 'hold': True,
+                    http('notifications/active', method='DELETE')
+                    http('notifications', {'name': 'effect-survey', 'text': '', 'hold': True,
                                     'effect': effect})
                     time.sleep(args.settle)
                     frames = []
