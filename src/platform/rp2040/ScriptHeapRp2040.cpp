@@ -1,9 +1,3 @@
-#include "platform/BuildFeatures.h"
-
-// Linked into every Pico build by the rp2040/ source filter; only the experimental scripting env
-// compiles anything here. ScriptStateDisabled.cpp is the other half of the switch.
-#if AWTRIX_FEATURE_SCRIPTING
-
 #include "platform/rp2040/ScriptHeapRp2040.h"
 
 #include <Arduino.h>
@@ -18,7 +12,7 @@
 
 // What the script VM may grow to on the Pico W. The ESP32 gets 96 KB of internal RAM; the Pico has
 // one heap of about 110 KB shared with Wi-Fi, lwIP, HTTP, MQTT and the frame buffers, so it gets
-// less. Set from build_flags (-D AWTRIX_RP2040_SCRIPT_HEAP_KB=n) to experiment.
+// less. Set from build_flags (-D AWTRIX_RP2040_SCRIPT_HEAP_KB=n) to tune a board.
 #ifndef AWTRIX_RP2040_SCRIPT_HEAP_KB
 #define AWTRIX_RP2040_SCRIPT_HEAP_KB 48
 #endif
@@ -99,5 +93,3 @@ void* awtrix_script_heap_realloc(void* ptr, size_t size) {
 void awtrix_script_heap_free(void* ptr) { std::free(ptr); }
 
 }
-
-#endif

@@ -55,8 +55,8 @@
 #include "transport/ScriptMqttBridge.h"
 #endif
 
-// Feature macros describe this build, not a claim that a runtime service exists. Scripting is an
-// experimental build option ([env:galactic_unicorn_scripting]); the rest stay out.
+// Feature macros describe this build, not a claim that a runtime service exists. Scripting is on
+// unless build_flags turn it off; the rest stay out.
 static_assert(!AWTRIX_FEATURE_MP3 &&
               !AWTRIX_FEATURE_RADIO && !AWTRIX_FEATURE_OUTBOUND_TLS &&
               !AWTRIX_FEATURE_BROWSER_OTA, "Pico skeleton must not enable unsupported services");
@@ -159,7 +159,7 @@ void beginScripting() {
   scriptSvc.maxAllocHeap = [] { return script::heap::picoLargestFreeBlock(); };
   {
     const script::heap::Info h = script::heap::info();
-    Serial.printf("scripts: Berry heap in %s, budget %u KB (experimental on RP2040)\n", h.name,
+    Serial.printf("scripts: Berry heap in %s, budget %u KB\n", h.name,
                   (unsigned)(h.budgetBytes / 1024));
   }
   mqtt.setScriptingRunning(config.scriptingEnabled);
