@@ -2562,7 +2562,9 @@ components:
             always ≤ freeHeapBytes. The script install and TLS-fetch guards refuse
             on this number, not on total free: a compile or an mbedtls handshake
             needs its buffers in one piece. The gap to freeHeapBytes is
-            fragmentation.
+            fragmentation. On the Pico it is the free block at the top of the
+            heap (its allocator cannot list the holes further down), so the true
+            largest block can only be larger.
         psramTotalBytes:
           type: integer
           description: |

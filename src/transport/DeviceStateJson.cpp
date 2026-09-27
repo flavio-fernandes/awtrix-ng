@@ -1,7 +1,10 @@
 #include "transport/DeviceStateJson.h"
 
 #include <Arduino.h>
-#if !defined(AWTRIX_PLATFORM_RP2040)
+#if defined(AWTRIX_PLATFORM_RP2040)
+#include <malloc.h>
+#include <unistd.h>
+#else
 #include <esp_heap_caps.h>
 #endif
 #include <WiFi.h>
@@ -46,11 +49,16 @@ std::string buildDeviceStateJson(CoreEngine& engine, IBoard& board, const std::s
   // first and it is the number worth watching.
 #if defined(AWTRIX_PLATFORM_RP2040)
   facts.freeHeapBytes = rp2040.getFreeHeap();
-  // arduino-pico has no largest-block or low-water API. Zero means unknown
-  // for the contiguous block; this low water is sampled by device requests.
+  // arduino-pico has no low-water API; this low water is sampled by device requests.
   static uint32_t sampledMin = facts.freeHeapBytes;
   sampledMin = std::min(sampledMin, facts.freeHeapBytes);
   facts.minFreeHeapBytes = sampledMin;
+  // newlib cannot walk its free list, so this is the block at the top of the heap: the free chunk
+  // malloc keeps there plus what sbrk has not handed out yet, up to the stack. Holes freed further
+  // down are not counted, so the true largest block is at least this, less malloc's page rounding.
+  const ptrdiff_t unclaimed = &__StackLimit - static_cast<char*>(sbrk(0));
+  facts.largestFreeBlockBytes = static_cast<uint32_t>(mallinfo().keepcost) +
+                                static_cast<uint32_t>(std::max<ptrdiff_t>(unclaimed, 0));
 #else
   facts.freeHeapBytes = heap_caps_get_free_size(kGuardHeapCaps);
   facts.minFreeHeapBytes = heap_caps_get_minimum_free_size(kGuardHeapCaps);
