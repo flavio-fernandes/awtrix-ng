@@ -30,6 +30,10 @@ constexpr unsigned long kCheckMs = 5000;
 constexpr int kWeakChecksBeforeRoam = 6;
 constexpr unsigned long kRoamCooldownMs = 300000;
 
+#if !defined(AWTRIX_PLATFORM_RP2040)
+constexpr int kBootJoinAttempts = 1;  // ESP32 keeps its station retrying alongside the AP
+#endif
+
 unsigned long joinTimeoutMs(const DeviceConfig& cfg) {
   return cfg.wifiConnectTimeout > 0 ? static_cast<unsigned long>(cfg.wifiConnectTimeout) : 15000UL;
 }
@@ -42,6 +46,11 @@ bool joinedBefore = false;
 // channel, so a join from AP_STA fails unless the router happens to use it. The Pico drops the AP
 // for one join window instead, and less often than ESP32 retries.
 constexpr unsigned long kPicoApRetryMs = 60000;
+// After an unclean reset (BOOTSEL, a power blip) the AP may still hold the old association, and the
+// first join can stall mid key exchange (driver join state AUTH, never KEYED) while a fresh join to
+// the same AP keys in milliseconds. Falling back to the provisioning AP instead costs the Pico a
+// minute offline and a reboot, so it joins again before giving up.
+constexpr int kBootJoinAttempts = 3;
 
 const char* cyw43LinkName(int link) {
   switch (link) {
@@ -187,17 +196,27 @@ void NetworkService::begin(const DeviceConfig& cfg, bool forceAp,
   cfg_ = &cfg;
   const unsigned long timeoutMs = joinTimeoutMs(cfg);
   if (!forceAp && !cfg.wifiSsid.empty()) {
-    joinStation(cfg, false);
-    if (status_) net::applyWifiAssoc(*status_, net::WifiAssoc::Joining, true, cfg.wifiSsid, "");
-    const unsigned long start = millis();
-    // Blocks boot until the join succeeds or times out; onWait keeps the boot animation moving so
-    // the matrix does not look frozen.
-    while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
+    for (int attempt = 1; attempt <= kBootJoinAttempts; ++attempt) {
 #if defined(AWTRIX_PLATFORM_RP2040)
-      logRadioEvents();
+      if (attempt > 1) {
+        const int link = cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA);
+        logf("wifi: join %d of %d did not finish in %lu ms (cyw43 link %d, %s), joining again",
+             attempt - 1, kBootJoinAttempts, timeoutMs, link, cyw43LinkName(link));
+      }
 #endif
-      if (onWait) onWait();
-      delay(10);
+      joinStation(cfg, false);
+      if (status_) net::applyWifiAssoc(*status_, net::WifiAssoc::Joining, true, cfg.wifiSsid, "");
+      const unsigned long start = millis();
+      // Blocks boot until the join succeeds or times out; onWait keeps the boot animation moving so
+      // the matrix does not look frozen.
+      while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
+#if defined(AWTRIX_PLATFORM_RP2040)
+        logRadioEvents();
+#endif
+        if (onWait) onWait();
+        delay(10);
+      }
+      if (WiFi.status() == WL_CONNECTED) break;
     }
   }
 
@@ -246,6 +265,10 @@ void NetworkService::startAp(const char* why) {
   dns_.start(53, "*", WiFi.softAPIP());
   logf("wifi: %s, provisioning AP \"%s\" at %s (captive portal)", why, hostname_.c_str(),
        WiFi.softAPIP().toString().c_str());
+#if defined(AWTRIX_PLATFORM_RP2040)
+  // The first station-only retry is a full interval after the AP comes up, not after boot.
+  lastApRetryMs_ = millis();
+#endif
 }
 
 void NetworkService::tick() {
