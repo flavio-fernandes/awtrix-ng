@@ -173,7 +173,7 @@ check "currentApp is Date" '.currentApp == "Date"'
 # An explicit empty body, as a browser sends: the simulator's HTTP library waits 5 s for the body
 # of a POST that has no Content-Length at all, then answers 400 (a known simulator gap).
 call "next" 200 POST /api/v1/apps/next --data ''
-call "previous" 200 POST /api/v1/apps/previous --data 
+call "previous" 200 POST /api/v1/apps/previous --data ''
 call "unknown app" 404 PUT /api/v1/apps/active -H "$json" -d "{\"name\":\"$name-none\"}"
 call "switch back to $current" 200 PUT /api/v1/apps/active -H "$json" -d "{\"name\":\"$current\",\"fast\":true}"
 
