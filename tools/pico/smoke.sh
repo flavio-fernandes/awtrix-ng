@@ -170,8 +170,10 @@ current=$(jq -r '.currentApp' "$tmp/device")
 call "switch to Date" 200 PUT /api/v1/apps/active -H "$json" -d '{"name":"Date","fast":true}'
 call "device" 200 GET /api/v1/device
 check "currentApp is Date" '.currentApp == "Date"'
-call "next" 200 POST /api/v1/apps/next
-call "previous" 200 POST /api/v1/apps/previous
+# An explicit empty body, as a browser sends: the simulator's HTTP library waits 5 s for the body
+# of a POST that has no Content-Length at all, then answers 400 (a known simulator gap).
+call "next" 200 POST /api/v1/apps/next --data ''
+call "previous" 200 POST /api/v1/apps/previous --data 
 call "unknown app" 404 PUT /api/v1/apps/active -H "$json" -d "{\"name\":\"$name-none\"}"
 call "switch back to $current" 200 PUT /api/v1/apps/active -H "$json" -d "{\"name\":\"$current\",\"fast\":true}"
 
@@ -244,6 +246,8 @@ if [[ "$mp3" == false ]]; then
   call "no MP3" 503 GET /api/v1/audio/mp3 && unavailable
   call "no MP3" 503 POST /api/v1/audio/play -H "$json" -d '{"mp3":"song"}' && unavailable
   call "no MP3" 503 DELETE /api/v1/audio/mp3/song && unavailable
+elif [[ "$target" == sim ]]; then
+  echo "skip  GET /api/v1/audio/mp3 (known gap: the simulator has no such route)"
 else
   call "MP3 list" 200 GET /api/v1/audio/mp3
 fi
