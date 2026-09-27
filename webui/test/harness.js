@@ -162,7 +162,7 @@ function mockFetch(store, netlog, win) {
     if (p === '/api/v1/device') return resp(store.device);
     if (p === '/api/v1/capabilities')
       return store.caps ? resp(store.caps) : resp({ error: { message: 'offline' } }, false, 503);
-    if (p === '/api/v1/system') return resp({ hostname: 'awtrix-ng' });
+    if (p === '/api/v1/system') return resp({ hostname: 'awtrix-ng', scriptingEnabled: true });
     if (p === '/api/v1/settings' && method === 'GET') return resp(store.settings);
     if (p === '/api/v1/settings' && method === 'PATCH') {
       store.settingsPatch = JSON.parse(opts.body || '{}');
