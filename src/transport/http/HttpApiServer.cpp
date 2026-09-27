@@ -49,6 +49,7 @@
 #include "system/HeapProbe.h"
 #include "transport/http/UpdateImage.h"
 #include "system/Log.h"
+#include "system/Watchdog.h"
 #include "transport/DeviceStateJson.h"
 #include "transport/http/WebUiAsset.h"
 
@@ -337,6 +338,8 @@ void HttpApiServer::handleFileUpload() {
     uploadFile_ = LittleFS.open(fn, "w");
     uploadWriteOk_ = static_cast<bool>(uploadFile_);
   } else if (up.status == UPLOAD_FILE_WRITE) {
+    // The whole upload arrives inside one loop() pass; a slow client must not trip the watchdog.
+    watchdog::feed();
     // Sniff the first chunk only, which is enough to catch a file dropped into the wrong folder.
     if (!uploadContentChecked_ && up.currentSize > 0) {
       uploadContentChecked_ = true;
@@ -413,6 +416,7 @@ void HttpApiServer::handleRestoreUpload() {
     restoreReader_.reset(new backup::ZipReader(*restoreApplier_));
     restoreStarted_ = true;
   } else if (up.status == UPLOAD_FILE_WRITE) {
+    watchdog::feed();
     if (restoreStarted_ && restoreReader_) restoreReader_->feed(up.buf, up.currentSize);
   } else if (up.status == UPLOAD_FILE_END) {
     if (restoreStarted_ && restoreReader_) restoreReader_->finish();
