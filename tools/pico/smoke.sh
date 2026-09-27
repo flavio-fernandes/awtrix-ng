@@ -167,9 +167,17 @@ check "$name is gone" '[.[] | select(.name == $n and .present)] | length == 0' -
 
 # --- app switch, next, previous, order -------------------------------------------------------
 current=$(jq -r '.currentApp' "$tmp/device")
-call "switch to Date" 200 PUT /api/v1/apps/active -H "$json" -d '{"name":"Date","fast":true}'
-call "device" 200 GET /api/v1/device
-check "currentApp is Date" '.currentApp == "Date"'
+# Any other app in the loop: which built-ins are enabled is the user's choice (a device may have
+# Date switched off), so the target is read, not assumed.
+other=$(get /api/v1/apps | jq -r --arg c "$current" \
+  '[.[] | select(.inLoop and .present != false and .name != $c) | .name][0] // empty')
+if [[ -n "$other" ]]; then
+  call "switch to $other" 200 PUT /api/v1/apps/active -H "$json" -d "{\"name\":\"$other\",\"fast\":true}"
+  call "device" 200 GET /api/v1/device
+  check "currentApp is $other" '.currentApp == $o' --arg o "$other"
+else
+  echo "skip  PUT /api/v1/apps/active (no second app in the loop)"
+fi
 # An explicit empty body, as a browser sends: the simulator's HTTP library waits 5 s for the body
 # of a POST that has no Content-Length at all, then answers 400 (a known simulator gap).
 call "next" 200 POST /api/v1/apps/next --data ''
@@ -240,7 +248,19 @@ if [[ "$scripting" == false ]]; then
   call "no scripting" 503 GET /api/v1/scripts/shared && unavailable
   call "no scripting" 503 GET "/api/v1/apps/$name/config" && unavailable
 else
+  # Install, read back, list and delete a two-line app; cleanup() deletes it again if this stops.
   call "scripting" 200 GET /api/v1/scripts/shared
+  printf 'class Smoke\n  def draw()\n    clear()\n  end\nend\n\nreturn Smoke()\n' >"$tmp/script.ax"
+  call "install script" 200 PUT "/api/v1/apps/script/$name" -H 'Content-Type: text/plain' \
+    --data-binary "@$tmp/script.ax"
+  check "compiles" '.ok == true and .error == null'
+  RAW=1 call "script source" 200 GET "/api/v1/apps/script/$name"
+  if cmp -s "$tmp/body" "$tmp/script.ax"; then verdict 1 "  source round-trips" ""
+  else verdict 0 "  source round-trips" "(bytes differ)"; fi
+  call "apps" 200 GET /api/v1/apps
+  check "$name listed as a script" 'any(.[]; .name == $n and .origin == "script")' --arg n "$name"
+  call "delete script" 200 DELETE "/api/v1/apps/$name"
+  call "script is gone" 404 GET "/api/v1/apps/script/$name"
 fi
 if [[ "$mp3" == false ]]; then
   call "no MP3" 503 GET /api/v1/audio/mp3 && unavailable
