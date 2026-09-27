@@ -298,6 +298,10 @@ void HttpApiServer::begin(uint16_t port, CoreEngine& engine, IBoard& board, Canv
 #endif
 }
 
+namespace {
+std::string uploadPartPath(const std::string& path) { return path + ".part"; }
+}
+
 // Runs once per chunk of the multipart body. Failures are only recorded in the upload* flags here;
 // handleFileUploadDone turns them into a status code afterwards.
 void HttpApiServer::handleFileUpload() {
@@ -335,7 +339,9 @@ void HttpApiServer::handleFileUpload() {
     uploadPath_ = fn.c_str();
     uploadContentOk_ = true;
     uploadContentChecked_ = false;
-    uploadFile_ = LittleFS.open(fn, "w");
+    // Written beside the target and renamed over it at the end, so a refused or broken upload
+    // leaves the file it would have replaced untouched (the simulator checks before it writes).
+    uploadFile_ = LittleFS.open(uploadPartPath(uploadPath_).c_str(), "w");
     uploadWriteOk_ = static_cast<bool>(uploadFile_);
   } else if (up.status == UPLOAD_FILE_WRITE) {
     // The whole upload arrives inside one loop() pass; a slow client must not trip the watchdog.
@@ -353,11 +359,16 @@ void HttpApiServer::handleFileUpload() {
     }
   } else if (up.status == UPLOAD_FILE_END) {
     if (uploadFile_) uploadFile_.close();
-    if ((!uploadContentOk_ || !uploadWriteOk_) && !uploadPath_.empty())
-      LittleFS.remove(uploadPath_.c_str());
+    if (uploadPath_.empty()) return;
+    const std::string part = uploadPartPath(uploadPath_);
+    if (uploadContentOk_ && uploadWriteOk_) {
+      if (LittleFS.exists(uploadPath_.c_str())) LittleFS.remove(uploadPath_.c_str());
+      uploadWriteOk_ = LittleFS.rename(part.c_str(), uploadPath_.c_str());
+    }
+    if (!uploadContentOk_ || !uploadWriteOk_) LittleFS.remove(part.c_str());
   } else if (up.status == UPLOAD_FILE_ABORTED) {
     if (uploadFile_) uploadFile_.close();
-    if (!uploadPath_.empty()) LittleFS.remove(uploadPath_.c_str());
+    if (!uploadPath_.empty()) LittleFS.remove(uploadPartPath(uploadPath_).c_str());
   }
 }
 
