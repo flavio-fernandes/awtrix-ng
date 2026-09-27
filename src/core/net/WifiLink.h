@@ -84,8 +84,21 @@ inline void applyWifiAssoc(LinkStatus& s, WifiAssoc assoc, bool hasSsid, const s
 class AuthFailureGate {
  public:
   // Call as each join attempt is issued, with what the radio reported for the attempt before it.
-  void noteJoin(WifiAssoc previous) { (void)previous; }
-  WifiAssoc filter(WifiAssoc assoc) { return assoc; }
+  void noteJoin(WifiAssoc previous) {
+    if (previous != WifiAssoc::AuthFailed) failedJoins_ = 0;
+    else if (failedJoins_ < UINT8_MAX) ++failedJoins_;
+  }
+
+  // Passes one observation of the radio through, holding back an authentication failure until the
+  // join before this one failed the same way.
+  WifiAssoc filter(WifiAssoc assoc) {
+    if (assoc == WifiAssoc::Connected) failedJoins_ = 0;
+    if (assoc == WifiAssoc::AuthFailed && failedJoins_ == 0) return WifiAssoc::Disconnected;
+    return assoc;
+  }
+
+ private:
+  uint8_t failedJoins_ = 0;
 };
 
 // Records that a reconnect was just issued and when the next one is due. Split out of

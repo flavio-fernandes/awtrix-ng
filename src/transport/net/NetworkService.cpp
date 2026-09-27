@@ -51,6 +51,8 @@ constexpr unsigned long kPicoApRetryMs = 60000;
 // the same AP keys in milliseconds. Falling back to the provisioning AP instead costs the Pico a
 // minute offline and a reboot, so it joins again before giving up.
 constexpr int kBootJoinAttempts = 3;
+// CYW43 reports a join the AP broke off mid key exchange as BADAUTH, the same as a wrong password.
+net::AuthFailureGate authGate;
 
 const char* cyw43LinkName(int link) {
   switch (link) {
@@ -107,6 +109,17 @@ void logRadioEvents() {
 
 #endif
 
+net::WifiAssoc radioAssoc() {
+  switch (WiFi.status()) {
+    case WL_CONNECTED:      return net::WifiAssoc::Connected;
+    case WL_NO_SSID_AVAIL:  return net::WifiAssoc::NoSsidFound;
+    case WL_CONNECT_FAILED: return net::WifiAssoc::AuthFailed;
+    case WL_IDLE_STATUS:
+    case WL_SCAN_COMPLETED: return net::WifiAssoc::Idle;
+    default:                return net::WifiAssoc::Disconnected;
+  }
+}
+
 void joinStation(const DeviceConfig& cfg, bool apMode) {
 #if defined(AWTRIX_PLATFORM_RP2040)
   // Before every join: begin() can bring the radio back up with firmware defaults.
@@ -116,6 +129,7 @@ void joinStation(const DeviceConfig& cfg, bool apMode) {
     logf("wifi: firmware roaming %s (roam_off %d)", roamOff == 1 ? "off" : "NOT off", roamOff);
     loggedRoamOff = roamOff;
   }
+  authGate.noteJoin(radioAssoc());
   logf("wifi: joining \"%s\"", cfg.wifiSsid.c_str());
   platform::pico::join(WiFi, apMode ? WIFI_AP_STA : WIFI_STA, cfg.wifiSsid.c_str(),
                        cfg.wifiPass.c_str());
@@ -140,14 +154,11 @@ net::WifiAssoc assocNow(bool apMode) {
   // In provisioning mode the station side is only ever mid-retry: a successful join restarts the
   // device, so "connected" is not a state the AP branch ever has to report.
   if (apMode) return net::WifiAssoc::Disconnected;
-  switch (WiFi.status()) {
-    case WL_CONNECTED:      return net::WifiAssoc::Connected;
-    case WL_NO_SSID_AVAIL:  return net::WifiAssoc::NoSsidFound;
-    case WL_CONNECT_FAILED: return net::WifiAssoc::AuthFailed;
-    case WL_IDLE_STATUS:
-    case WL_SCAN_COMPLETED: return net::WifiAssoc::Idle;
-    default:                return net::WifiAssoc::Disconnected;
-  }
+#if defined(AWTRIX_PLATFORM_RP2040)
+  return authGate.filter(radioAssoc());
+#else
+  return radioAssoc();
+#endif
 }
 }
 
