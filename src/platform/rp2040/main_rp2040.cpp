@@ -210,6 +210,16 @@ void loop() {
   }
   if (nowMs < nextFrameMs) { delay(1); return; }
   nextFrameMs = nowMs + awtrix::kFramePeriodMs;
+  {
+    static uint16_t frames = 0;
+    static int64_t windowStart = 0;
+    ++frames;
+    if (nowMs - windowStart >= 1000) {
+      engine->state().runtime().fps = frames;
+      frames = 0;
+      windowStart = nowMs;
+    }
+  }
   audioRouter.tick(nowMs);
   engine->tick(nowMs);
   const bool wakeNotif = engine->hasNotification() && engine->notifications().current().wakeup;
