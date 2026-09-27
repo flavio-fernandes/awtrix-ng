@@ -1589,12 +1589,15 @@ const SOUND_KEYS=Object.keys(SYSF).filter(k=>SYSF[k].api==='settings');
 const S={transitions:[],stats:null,ap:false,sysHost:'',sysUid:'',gpio:null,aud:null,
   scriptsOff:null};
 function readAudioCaps(caps){
+  S.scripting=caps.scripting!==false;
   const a=caps.audio||{};
   S.aud={buzzer:a.buzzer===true,track:a.track===true,mp3:a.mp3===true,radio:a.radio===true};
 }
 // Unknown counts as present, so nothing is hidden before the capabilities have arrived.
 const hasSink=(...k)=>!S.aud||k.some(x=>S.aud[x]);
 const anyAudioCap=()=>hasSink('buzzer','track','mp3','radio');
+const hasScripting=()=>S.scripting!==false;
+const unavailableNote=()=>tt('Not available on this board.|Auf diesem Board nicht verfügbar.');
 async function scriptsOff(){
   if(S.scriptsOff===null){
     try{S.scriptsOff=(await api('/api/v1/device',{timeout:4000})).data.scriptingRunning===false;}
@@ -1693,7 +1696,7 @@ function currentRoute(){
 function nav(){
   const cur=currentRoute();
   const tabs=S.ap?TABS.filter(([r])=>r==='system')
-    :TABS.filter(([r])=>r!=='audio'||anyAudioCap());
+    :TABS.filter(([r])=>(r!=='audio'||anyAudioCap())&&(r!=='scripts'||hasScripting()));
   $('#nav').setAttribute('aria-label',t('mainnav'));
   $('#nav').replaceChildren(...tabs.map(([r,k])=>el('a',{href:'#/'+r,class:cur===r?'on':'','aria-current':cur===r?'page':null},t(k))));
 }
@@ -2848,7 +2851,16 @@ async function prepareHubScriptUpdate(previous,release,readSource=hubScriptRelea
 }
 // HUB SCRIPT UPDATES END
 
-function viewScripts(view){
+async function viewScripts(view){
+  const generation=gen;
+  if(S.scripting===undefined){
+    try{readAudioCaps((await api('/api/v1/capabilities')).data||{});nav();}
+    catch(e){view.append(el('div',{class:'card wide'},t('neterr')));return;}
+    if(generation!==gen)return;
+  }
+  if(!hasScripting()){
+    view.append(el('div',{class:'card wide'},t('grpScript')+': '+unavailableNote()));return;
+  }
   const ed=mkCodeEditor();
   const nameIn=el('input',{type:'text',placeholder:t('name'),maxlength:'32',spellcheck:'false',
     pattern:'[A-Za-z0-9_-]{1,32}'});
@@ -3491,7 +3503,9 @@ async function viewSystem(view){
     SYSF.soundEnabled.g=g(hasSink('buzzer','track','mp3'));
   }
   ['wifiPass','mqttPass','authPass'].forEach(k=>{if(!(k in data))data[k]='';});
+  SYSF.scriptingEnabled.g=hasScripting()?'script':'hidden';
   (S.ap?provisioningPage:systemPage)(view,data);
+  if(!S.ap&&!hasScripting())view.append(el('div',{class:'card wide'},t('grpScript')+': '+unavailableNote()));
 }
 function systemSettingsPage(view,data){
   const rbBtn=el('button',{class:'pri'},t('rebootnow'));
@@ -4863,6 +4877,9 @@ async function viewAudio(view){
   const{section,panel}=sectionShell(view);
   const muted=el('div',{class:'ghelp',style:'display:none;color:var(--warn)'},t('melomuted'));
   panel.prepend(muted);
+  const missing=['mp3','radio'].filter(k=>!hasSink(k));
+  if(missing.length)panel.prepend(el('div',{class:'ghelp'},
+    missing.map(k=>k==='mp3'?'MP3':t('radioTab')).join(', ')+': '+unavailableNote()));
 
   // Each section carries the volume of the output it belongs to, so a level is set where the
   // sound is, not two tabs away. No help line here - the section heading already says which
@@ -5464,7 +5481,7 @@ new ResizeObserver(setChromeH).observe(topbar);
     const caps=(await api('/api/v1/capabilities')).data||{};
     if(!S.transitions.length)S.transitions=caps.transitions||[];
     readAudioCaps(caps);
-    if(!anyAudioCap())nav();
+    nav();
   }catch(e){}
 })();
 }
