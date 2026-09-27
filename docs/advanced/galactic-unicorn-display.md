@@ -78,8 +78,8 @@ I2S initialization the shared capabilities serializer reports
 Upload `s:d=4,o=6,b=125:c,e,g` as melody `alert`, then send a notification with
 `"sound":"alert"`. This reads `/MELODIES/alert.txt`. Inline `soundRtttl` uses the
 same parser and overrides `sound` when both are present, just as on ESP32.
-Set `buzzerVolume` (0–100) through `/api/v1/settings` or the volume keys;
-there is no new generic `volume` field. `soundEnabled` gates new one-shots.
+Set `buzzerVolume` (0–100) through `/api/v1/settings` or the volume keys.
+`soundEnabled` gates new one-shots.
 
 The arduino-pico I2S library supplied by the pinned PlatformIO platform drives
 GPIO 9 (data), 10 (BCLK), 11 (LRCLK); GPIO 22 is LOW when idle or volume is zero.
