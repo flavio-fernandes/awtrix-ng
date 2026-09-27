@@ -257,10 +257,11 @@ establish physical refresh timing, orientation, or absence of visible tearing.
 ## Scripting on the Pico W
 
 Berry scripting is on in `galactic_unicorn` and `galactic_unicorn_2w`; build with
-`-D AWTRIX_FEATURE_SCRIPTING=0` to leave it out. The VM gets a 48 KB budget
-(`scriptHeapBudgetBytes`, set with `-D AWTRIX_RP2040_SCRIPT_HEAP_KB=n`) from the one
-heap Wi-Fi, HTTP, MQTT and the display share; the interpreter itself costs about
-19 KB of free heap with no script installed. Every call into a script is capped at
+`-D AWTRIX_FEATURE_SCRIPTING=0` to leave it out. The VM gets a 48 KB budget on the
+Pico W and 96 KB, the ESP32's, on the Pico 2 W (`scriptHeapBudgetBytes`, set with
+`-D AWTRIX_RP2040_SCRIPT_HEAP_KB=n`) from the one heap Wi-Fi, HTTP, MQTT and the
+display share; on the Pico W the interpreter itself costs about 19 KB of free heap
+with no script installed. Every call into a script is capped at
 `BerryVM::kInstructionLimit` instructions and returns to `loop()`, which feeds the
 8 s watchdog. Drawing, timers, storage, buttons, sound and MQTT work as on the ESP32;
 on the Pico `http.*` requests return `false` and script icons are not drawn.

@@ -10,11 +10,16 @@
 #include "core/script/ScriptHeap.h"
 #include "core/script/ScriptServices.h"
 
-// What the script VM may grow to on the Pico W. The ESP32 gets 96 KB of internal RAM; the Pico has
-// one heap of about 110 KB shared with Wi-Fi, lwIP, HTTP, MQTT and the frame buffers, so it gets
-// less. Set from build_flags (-D AWTRIX_RP2040_SCRIPT_HEAP_KB=n) to tune a board.
+// What the script VM may grow to. The ESP32 gets 96 KB of internal RAM. The Pico W (RP2040, 264 KB)
+// has one heap of about 110 KB shared with Wi-Fi, lwIP, HTTP, MQTT and the frame buffers, so it
+// gets less; the Pico 2 W (RP2350, 520 KB) has room for the ESP32's 96 KB. Set from build_flags
+// (-D AWTRIX_RP2040_SCRIPT_HEAP_KB=n) to tune a board.
 #ifndef AWTRIX_RP2040_SCRIPT_HEAP_KB
+#if defined(PICO_RP2350) && PICO_RP2350
+#define AWTRIX_RP2040_SCRIPT_HEAP_KB 96
+#else
 #define AWTRIX_RP2040_SCRIPT_HEAP_KB 48
+#endif
 #endif
 
 namespace awtrix {
