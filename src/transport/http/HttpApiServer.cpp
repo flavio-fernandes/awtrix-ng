@@ -49,6 +49,7 @@
 #include "system/HeapProbe.h"
 #include "transport/http/UpdateImage.h"
 #include "system/Log.h"
+#include "system/Watchdog.h"
 #include "transport/DeviceStateJson.h"
 #include "transport/http/WebUiAsset.h"
 
@@ -304,6 +305,9 @@ std::string uploadPartPath(const std::string& path) { return path + ".part"; }
 // Runs once per chunk of the multipart body. Failures are only recorded in the upload* flags here;
 // handleFileUploadDone turns them into a status code afterwards.
 void HttpApiServer::handleFileUpload() {
+  // Every chunk arrives inside one loop() pass, refused uploads included (a disabled route still
+  // has to read the whole body before it can answer); a slow client must not trip the watchdog.
+  watchdog::feed();
   if (featurePolicy(platform::buildFeatures(), std::string(server_->uri().c_str())) ==
       DispatchResult::Unavailable) return;
   HTTPUpload& up = server_->upload();
@@ -410,6 +414,7 @@ void HttpApiServer::handleFileUploadDone() {
 // The backup zip is piped chunk by chunk through the reader and applier straight onto the
 // filesystem; there is nowhere near enough heap to hold the archive.
 void HttpApiServer::handleRestoreUpload() {
+  watchdog::feed(); // see handleFileUpload()
   HTTPUpload& up = server_->upload();
   if (up.status == UPLOAD_FILE_START) {
     restoreStarted_ = false;
@@ -464,6 +469,7 @@ void HttpApiServer::dropRawBody() {
 // Called by WebServer for every raw-body chunk. Script sources use a second arena that is
 // allocated at RAW_START and released again on completion, since it dwarfs the fixed body arena.
 void HttpApiServer::collectBody(HttpServerBase& server, const String& uri, HTTPRaw& raw) {
+  watchdog::feed(); // a script source arrives inside one loop() pass too; see handleFileUpload()
   const std::string method = methodName(server.method());
   const std::string path = uri.c_str();
   const bool rawSource = api::isRawBodyWrite(method, path);
@@ -528,6 +534,7 @@ void HttpApiServer::scanImageMarker(const uint8_t* buf, size_t len) {
 }
 
 void HttpApiServer::handleUpdateUpload() {
+  watchdog::feed(); // see handleFileUpload()
   if (!platform::buildFeatures().browserOta) return;
   HTTPUpload& up = server_->upload();
   if (apMode_) return;
@@ -629,7 +636,9 @@ void HttpApiServer::handleUpdateDone() {
   engine_->execute(Command(CommandType::Reboot));
 }
 #else
-void HttpApiServer::handleUpdateUpload() {}
+void HttpApiServer::handleUpdateUpload() {
+  watchdog::feed(); // the refused image is still read to the end; see handleFileUpload()
+}
 void HttpApiServer::handleUpdateDone() {
   addCorsHeaders(false);
   sendError(503, "unavailable", "browser update is unavailable; flash a UF2 over USB (BOOTSEL)");
