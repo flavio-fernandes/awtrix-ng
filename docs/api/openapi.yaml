@@ -1362,7 +1362,7 @@ paths:
                   overlays: { type: array, items: { type: string } }
                   scripting:
                     type: boolean
-                    description: Berry scripting is compiled in; false on Galactic Unicorn builds.
+                    description: Berry scripting is compiled in; false only on builds made with AWTRIX_FEATURE_SCRIPTING=0.
                   scriptUpdates:
                     type: boolean
                     description: Script source updates are supported; follows scripting.
