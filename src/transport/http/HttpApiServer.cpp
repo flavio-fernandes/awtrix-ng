@@ -13,6 +13,8 @@
 // CONFIG_SPIRAM_MODE_QUAD out of it, and an absent macro reads as octal - which is the wrong
 // answer to be arriving at by accident.
 #include <sdkconfig.h>
+#else
+#include <lwip/tcp.h>
 #endif
 
 #include <algorithm>
@@ -97,6 +99,18 @@ class RawWebServer : public WebServer {
   }
 #endif
 };
+
+#if defined(AWTRIX_PLATFORM_RP2040)
+// arduino-pico's lwIP has five TCP pcbs, and ClientContext drops every accepted connection to
+// TCP_PRIO_MIN while the listener stays at TCP_PRIO_NORMAL. A SYN that finds the pool full then
+// makes lwIP abort the oldest accepted connection to make room, so a browser opening eight sockets
+// at once saw two or three of them reset mid-request. At its clients' priority the listener can no
+// longer evict them: the extra SYN is dropped, and the client's retransmit gets in once a request
+// has been answered.
+struct ListenPcb : WiFiServer {
+  static tcp_pcb* of(WiFiServer& server) { return server.*(&ListenPcb::_listen_pcb); }
+};
+#endif
 
 const char* methodName(HTTPMethod m) {
   switch (m) {
@@ -266,6 +280,9 @@ void HttpApiServer::begin(uint16_t port, CoreEngine& engine, IBoard& board, Canv
   if (!bodyArena_.init(kMaxBodyBytes))
     logf("http: body arena allocation failed; body-carrying requests will be refused");
   server_->begin();
+#if defined(AWTRIX_PLATFORM_RP2040)
+  if (tcp_pcb* listener = ListenPcb::of(server_->getServer())) tcp_setprio(listener, TCP_PRIO_MIN);
+#endif
 }
 
 // Runs once per chunk of the multipart body. Failures are only recorded in the upload* flags here;
