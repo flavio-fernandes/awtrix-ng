@@ -3,6 +3,7 @@
 #include "../../src/platform/rp2040/LittleFsPreferences.cpp"
 #include "../../src/platform/rp2040/FilesystemRp2040.cpp"
 #include "../../src/platform/rp2040/DisabledStores.cpp"
+#include "../../src/persistence/ScriptStore.cpp"
 #include "../../src/persistence/DeviceConfig.cpp"
 #include "../../src/persistence/NvsSettings.cpp"
 #include "../../src/persistence/AppOrderStore.cpp"
@@ -101,8 +102,11 @@ void restore_and_disabled_stores() {
   TEST_ASSERT_TRUE(sink.endFile()); TEST_ASSERT_EQUAL_STRING("new", testFiles["/ICONS/test.gif"].c_str());
   TEST_ASSERT_FALSE(sink.beginFile("/NVS/awtrix-cfg.bin", err));
   TEST_ASSERT_FALSE(sink.beginFile("/ICONS/../bad", err));
+  // Scripting is on for the Pico: the shared ScriptStore persists under /SCRIPTS.
   ScriptStore scripts; scripts.save("test", "source"); scripts.storeChanged("test", "{}"); scripts.flush();
-  TEST_ASSERT_TRUE(scripts.names().empty()); TEST_ASSERT_EQUAL(0, scripts.pendingCount());
+  std::string src; TEST_ASSERT_TRUE(scripts.readSource("test", src));
+  TEST_ASSERT_EQUAL_STRING("source", src.c_str()); TEST_ASSERT_EQUAL(0, scripts.pendingCount());
+  TEST_ASSERT_EQUAL_STRING("source", testFiles["/SCRIPTS/test.ax"].c_str());
   radiostore::save("[]"); TEST_ASSERT_FALSE(testFiles.count("/radio.json"));
 }
 int main() {
