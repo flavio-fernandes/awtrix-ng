@@ -110,6 +110,14 @@ class RawWebServer : public WebServer {
 struct ListenPcb : WiFiServer {
   static tcp_pcb* of(WiFiServer& server) { return server.*(&ListenPcb::_listen_pcb); }
 };
+
+// lwIP reports that dropped SYN as accept(NULL, ERR_MEM), and WiFiServer would wrap the NULL pcb in
+// a client and fault. Only real connections reach it.
+tcp_accept_fn serverAccept = nullptr;
+err_t acceptConnected(void* arg, tcp_pcb* pcb, err_t err) {
+  if (pcb == nullptr || err != ERR_OK) return ERR_MEM;
+  return serverAccept(arg, pcb, err);
+}
 #endif
 
 const char* methodName(HTTPMethod m) {
@@ -281,7 +289,11 @@ void HttpApiServer::begin(uint16_t port, CoreEngine& engine, IBoard& board, Canv
     logf("http: body arena allocation failed; body-carrying requests will be refused");
   server_->begin();
 #if defined(AWTRIX_PLATFORM_RP2040)
-  if (tcp_pcb* listener = ListenPcb::of(server_->getServer())) tcp_setprio(listener, TCP_PRIO_MIN);
+  if (tcp_pcb* listener = ListenPcb::of(server_->getServer())) {
+    tcp_setprio(listener, TCP_PRIO_MIN);
+    serverAccept = reinterpret_cast<tcp_pcb_listen*>(listener)->accept;
+    tcp_accept(listener, acceptConnected);
+  }
 #endif
 }
 
