@@ -10,13 +10,7 @@
 #define AWTRIX_MATRIX_PINS_ESP32S3(X) \
   X(13) X(14) X(15) X(16) X(17) X(18) X(21) X(38) X(39) X(40) X(41) X(42) X(47)
 
-#if defined(AWTRIX_SOC_ESP32S3)
-#define AWTRIX_MATRIX_PIN_LIST(X) AWTRIX_MATRIX_PINS_ESP32S3(X)
-#define AWTRIX_MATRIX_FALLBACK_PIN 21
-#else
-#define AWTRIX_MATRIX_PIN_LIST(X) AWTRIX_MATRIX_PINS_ESP32(X)
-#define AWTRIX_MATRIX_FALLBACK_PIN 32
-#endif
+
 
 namespace awtrix {
 namespace pins {
@@ -191,15 +185,8 @@ inline const SocProfile& rp2040Profile() {
   return p;
 }
 
-inline const SocProfile& activeProfile() {
-#if defined(AWTRIX_SOC_ESP32S3)
-  return esp32s3Profile();
-#elif defined(AWTRIX_SOC_RP2040)
-  return rp2040Profile();
-#else
-  return esp32Profile();
-#endif
-}
+// Implemented by the platform; policy and reference profiles above are portable.
+const SocProfile& activeProfile();
 
 }
 }

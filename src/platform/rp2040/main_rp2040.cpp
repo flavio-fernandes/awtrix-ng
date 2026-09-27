@@ -78,7 +78,7 @@ MqttService mqtt;
 std::unique_ptr<net::IHostResolver> mqttResolver;
 render::PowerAnimator* powerAnimator;
 int64_t nextFrameMs = 0;
-int64_t nextLogMs = 0;
+
 awtrix::DeviceConfig config;
 bool storageReady = false;
 bool settingsDirty = false;
@@ -273,11 +273,7 @@ void loop() {
   board->applyColorGrade(awtrix::render::gradeFrom(settings));
 
   board->show(*canvas);
-  if (nowMs >= nextLogMs) {
-    nextLogMs = nowMs + 5000;
-    Serial.printf("AWTRIX loop: %llu ms, heap free %u bytes\n",
-                  static_cast<unsigned long long>(nowMs), rp2040.getFreeHeap());
-  }
+
   if (systemService.hasPending() && !powerAnimator->busy()) {
     if (settingsDirty && storageReady && !systemService.resetsSettings())
       awtrix::nvs::saveSettings(engine->state().settings());
