@@ -162,7 +162,7 @@ function mockFetch(store, netlog, win) {
     if (p === '/api/v1/device') return resp(store.device);
     if (p === '/api/v1/capabilities')
       return store.caps ? resp(store.caps) : resp({ error: { message: 'offline' } }, false, 503);
-    if (p === '/api/v1/system') return resp({ hostname: 'awtrix-ng' });
+    if (p === '/api/v1/system') return resp({ hostname: 'awtrix-ng', scriptingEnabled: true });
     if (p === '/api/v1/settings' && method === 'GET') return resp(store.settings);
     if (p === '/api/v1/settings' && method === 'PATCH') {
       store.settingsPatch = JSON.parse(opts.body || '{}');
@@ -295,18 +295,31 @@ function mockFetch(store, netlog, win) {
   };
 }
 
+// Holds the chosen API answers back by `delays[path]` ms, so a test can watch a
+// page that is already drawn when its data arrives.
+const delayed = (fetchImpl, delays) => window => {
+  const fetch = fetchImpl(window);
+  if (!delays) return fetch;
+  return (url, opts) => {
+    const ms = delays[new URL(url, 'http://localhost').pathname];
+    return ms ? new Promise(r => setTimeout(() => r(fetch(url, opts)), ms)) : fetch(url, opts);
+  };
+};
+
 async function boot(opts) {
   const store = makeStore();
   // The boot IIFE fetches capabilities immediately, so a test that wants
   // different caps has to hand them in before the page comes up.
   if (opts && 'caps' in opts) store.caps = opts.caps;
+  if (opts && opts.device) Object.assign(store.device, opts.device);
   const netlog = [];
   const dom = new JSDOM(loadHtml(), {
     runScripts: 'dangerously',
     pretendToBeVisual: true,
-    url: 'http://localhost/',
+    // opts.url opens the page straight on a route, the way a bookmark does.
+    url: (opts && opts.url) || 'http://localhost/',
     virtualConsole: makeVirtualConsole(),
-    beforeParse: installGlobals(window => mockFetch(store, netlog, window)),
+    beforeParse: installGlobals(delayed(window => mockFetch(store, netlog, window), opts && opts.delays)),
   });
   await flush(60); // boot render() + device/capabilities/system fetches
   return { dom, window: dom.window, store, netlog };
