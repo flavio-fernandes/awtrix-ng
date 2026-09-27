@@ -333,7 +333,7 @@ Details and recovery: [GPIO & boards](../reference/gpio.md) -
 
 | Action | What happens |
 |---|---|
-| **Upload firmware (.bin)** | Uploads to `/update` with a live progress bar; AWTRIX reboots into the new firmware |
+| **Upload firmware (.bin)** | Uploads to `/update` with a live progress bar; AWTRIX reboots into the new firmware. A Galactic Unicorn shows how to flash its `.uf2` over USB instead |
 | **Reboot** | Two-step confirm, then `POST /api/v1/device/reboot`; the page reloads itself |
 | **Reset settings** | Two-step confirm, then `POST /api/v1/settings/reset` - display settings only, network survives |
 | **Factory reset** | Erases **everything** (Wi-Fi, files, settings). No two-step button: you must type the hostname |
