@@ -53,6 +53,17 @@ class Observer:
                 assert remaining > 0, f"missing {topic}: {payload}"
                 self.condition.wait(remaining)
 
+    def wait_retained(self, topic, timeout=15):
+        deadline = time.monotonic() + timeout
+        with self.condition:
+            while True:
+                for message in self.messages:
+                    if message["topic"] == topic and message["retain"]:
+                        return message
+                remaining = deadline - time.monotonic()
+                assert remaining > 0, f"no retained copy of {topic}"
+                self.condition.wait(remaining)
+
     def command(self, suffix, payload):
         start = len(self.messages)
         topic = "f7/cmd/" + suffix
@@ -138,8 +149,10 @@ def main():
                     start = len(observer.messages)
                     http("/sim/button/" + name, {"durationMs": 200})
                     topic = "f7/state/buttons/" + name
-                    report["button_edges"].append(observer.wait(topic, "1", start=start))
-                    report["button_edges"].append(observer.wait(topic, "0", start=start))
+                    press = observer.wait(topic, "1", start=start)
+                    after = next(i for i, m in enumerate(observer.messages) if m is press) + 1
+                    report["button_edges"].append(press)
+                    report["button_edges"].append(observer.wait(topic, "0", start=after))
                 report["checks"].append("left/select/right press and release edges")
 
                 # Retain is observed on a NEW subscription, not the live delivery.
@@ -148,8 +161,8 @@ def main():
                     topics = ["availability", "state/capabilities", "state/prefix", "state/device",
                               "state/settings", "state/audio", "state/apps/active"]
                     topics += ["state/buttons/" + name for name in ("left", "select", "right")]
-                    retained = [fresh.wait("f7/" + topic) for topic in topics]
-                    retained.append(fresh.wait("homeassistant/device/simulator/config"))
+                    retained = [fresh.wait_retained("f7/" + topic) for topic in topics]
+                    retained.append(fresh.wait_retained("homeassistant/device/simulator/config"))
                     assert all(message["retain"] for message in retained), retained
                     time.sleep(0.3)
                     assert not any(m["topic"].endswith("/result") or m["topic"] == "f7/state/screen"
