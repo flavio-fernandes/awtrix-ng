@@ -168,6 +168,12 @@ watchdog → `watchdog`, reboot → `software`, RUN pin/debug → `external`,
 brownout → `brownout` when distinguishable, otherwise `unknown`. ESP32 values
 are unchanged. Pico boot logs and `/api/v1/device` report this reason.
 
+The RP2040 hardware watchdog is armed once the radio is up, with its ~8 s maximum. A Pico that
+hangs or hard-faults reboots itself after about 8 seconds, like an ESP32 after a panic, and
+`/api/v1/device` then reports `resetReason: "watchdog"`. Boot's Wi-Fi join, file and backup
+uploads and sleep feed it while they wait; factory reset disarms it before formatting LittleFS
+and reboots straight after. A requested reboot or a flash still reads `software`.
+
 The shared device command dispatcher queues reboot/sleep/reset and performs it
 after the response delay and display power animation, just like ESP32. The Pico
 has **no ESP32-style deep sleep with GPIO wake**. Sleep instead blanks the panel
