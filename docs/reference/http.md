@@ -2068,13 +2068,13 @@ Anything not matched above answers **404** `notFound` with message `unknown rout
 | GET | `/ICONS/*`, `/MELODIES/*`, `/PALETTES/*`, `/MP3/*`, `/SCRIPTS/*`, `/apploop.json` | [static assets](#web-ui-and-static-assets) |
 ## Galactic Unicorn build capabilities
 
-`GET /api/v1/capabilities` includes `scripting` (true on existing ESP32 and
-simulator builds, false on the Pico builds). `scriptUpdates` follows that flag.
+`GET /api/v1/capabilities` includes `scripting` (true on the ESP32, simulator and
+Pico builds unless built with `AWTRIX_FEATURE_SCRIPTING=0`). `scriptUpdates` follows that flag.
 The `audio` flags come from registered sound sinks, not just build support:
 Pico currently reports buzzer, track, mp3 and radio false. A future I2S tone sink
 will enable buzzer without enabling MP3 or radio.
 
-Pico's disabled script source/shared/config routes, MP3 routes, radio station
+Pico's MP3 routes, radio station
 routes, MP3/radio play commands and browser `/update` return HTTP 503 with the
 existing `unavailable` error. MQTT audio commands return `ok:false` with the same
 error code (MQTT has no HTTP status). There are no MQTT script-upload commands.

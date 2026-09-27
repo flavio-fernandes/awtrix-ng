@@ -10,8 +10,12 @@
   content centred above full-canvas effects, backgrounds, charts and transitions.
 - **Capability-driven controls.** Builds without scripting hide its toggle and
   editor; unsupported MP3/radio controls remain hidden with an availability note.
-  The initial Pico builds omit scripting, MP3/radio, outbound TLS and browser OTA;
-  use USB BOOTSEL updates and note that timed sleep is emulated, not deep sleep.
+  The Pico builds omit MP3/radio, outbound TLS and browser OTA; use USB BOOTSEL
+  updates and note that timed sleep is emulated, not deep sleep.
+- **Berry scripting on the Galactic Unicorn.** Both Pico builds run scripts and
+  report `scripting: true`: a 48 KB script heap on the Pico W, about 7 KB per
+  script at most, and 96 KB on the Pico 2 W (compile-only). Script HTTP requests
+  and script icons are not available on the Pico.
 
 - **Install firmware updates from the web UI.** Click **Check for updates**, then **Download & install** and confirm. Updates are checked only when you ask. Your browser downloads and verifies the correct image, then uploads it to AWTRIX with progress shown throughout. Settings and files are kept.
 - **Modbus TCP for Berry scripts.** Read holding registers, input registers, coils and discrete inputs from local devices without blocking the display. Helpers decode signed integers and 32-bit floating-point values, with configurable host, port and unit ID.
