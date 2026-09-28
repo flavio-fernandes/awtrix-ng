@@ -195,11 +195,14 @@ struct PongGame {
     for (int side = 0; side < 2; ++side) {
       const bool receiving = (side == 0) == (sx < 0);
       int t = top[side];
+      // The receiving paddle outpaces the ball (2 rows a tick against 1) so it reaches its aim
+      // point; the other one lags at half a row a tick.
       if (receiving || (ticks & 1u)) {
         const int want = clampInt(y - (receiving ? aim : (paddle - 1) / 2), 0, h - paddle);
-        t += want > t ? 1 : (want < t ? -1 : 0);
+        const int reach = receiving ? 2 : 1;
+        t += clampInt(want - t, -reach, reach);
       }
-      // The ball moves at most one row a tick, so this moves the paddle one row at most.
+      // Keep covering the ball's row; it moves at most one row a tick.
       top[side] = clampInt(t, std::max(0, y - paddle + 1), std::min(h - paddle, y));
     }
   }
