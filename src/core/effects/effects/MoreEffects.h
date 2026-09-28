@@ -181,7 +181,9 @@ struct PongGame {
     if ((sx < 0 && x <= 1) || (sx > 0 && x >= w - 2)) {
       const int rel = y - top[sx < 0 ? 0 : 1];
       sx = -sx;
-      shallow = rel > 0 && rel < paddle - 1;
+      // A corner ball meets the wall-side edge of a paddle pinned to the wall: that counts as
+      // the middle, or 45-degree rallies could lock into corner-to-corner forever.
+      shallow = (rel > 0 && rel < paddle - 1) || y == 0 || y == h - 1;
       if (rel == 0) sy = -1;
       if (rel == paddle - 1) sy = 1;
       ++rally;
