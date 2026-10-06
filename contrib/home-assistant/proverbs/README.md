@@ -38,9 +38,15 @@ No copy or reimplementation of that blueprint is included here.
      --output /config/packages/proverbs/proverbs.txt
    ```
 
-   The command-line integration needs `shuf` and `tr` (available in the official
-   HA container). The sensor picks one random line, strips CR, and truncates to
-   250 Unicode characters. Its yearly scan interval disables practical periodic
+   The command-line integration needs `shuf` and `tr`, both present in the
+   official HA container (confirmed on 2026.9.4). The container cannot be probed
+   from the SSH add-on beforehand, so if `sensor.proverb` comes up `unknown`,
+   replace `shuf -n 1` with
+   `awk 'BEGIN{srand()} {a[NR]=$0} END{if(NR>0) print a[int(rand()*NR)+1]}'`
+   and call `homeassistant.reload_all`; no restart is needed, because
+   `command_line` is reloadable. The sensor picks one random line, strips CR,
+   and truncates to 250 Unicode characters, which also keeps the state under
+   HA's 255-character limit. Its yearly scan interval disables practical periodic
    polling; HA still performs its initial read. Subsequent reads are requested by
    the pacing automation. Download again manually to refresh the source list.
 4. In the package's ONE marked `motion_entity` variable, confirm or replace the
@@ -122,6 +128,51 @@ pass fits and the queue does not grow.
   expires; it simply stops selecting new proverbs until motion qualifies again.
 - The package itself does not publish MQTT (only the optional direct automation does). Do not run the old service and this
   automation together or they will compete for the display.
+
+## Disable and purge
+
+Nothing here creates a config entry, a device, a custom component, a pip
+dependency or an add-on, so there is no integration page to clean up. The
+package publishes no MQTT at all, and the optional direct automation publishes
+to `<prefix>/cmd/notify` without `retain`, so nothing is left on the broker and
+nothing is written to the display's flash. Notifications are transient and no
+custom app is created.
+
+**Turn it off** — instant, no restart, no file edits. Disable the `AWTRIX
+proverb pacing` automation and whichever notification automation you chose, then
+call `timer.cancel` on `timer.proverb_pacing`. Press the display's
+`dismiss_notification` button if a proverb is still scrolling. Automation enable
+state lives in the entity registry, so this survives a restart; re-enable with
+the same toggles.
+
+**Unload the package, keep the files.** Comment out the
+`proverbs: !include packages/proverbs/proverbs.yaml` line, run `ha core check`,
+and restart. The package's entities become unavailable. A notification
+automation kept in `automations.yaml` survives but can no longer fire, because
+the helper it triggers on is gone.
+
+**Purge.**
+
+1. Delete the notification automation. If you appended it to
+   `automations.yaml`, the UI's delete does it; if you moved it into the
+   package, it goes with the package.
+2. Press the display's `dismiss_notification` button to clear the panel.
+3. Remove the `homeassistant: packages:` entry from `configuration.yaml`.
+4. `rm -rf /config/packages/proverbs`.
+5. `ha core check`, then restart HA.
+6. Settings -> Devices & Services -> Entities, search `proverb`, select all and
+   remove. YAML-defined entities leave registry rows behind as unavailable
+   entries once their config is gone.
+7. Call `recorder.purge_entities` with `entity_globs: ["*proverb*"]` and
+   `keep_days: 0`. `sensor.proverb` records a new ~250-character state every
+   interval while motion qualifies, so this is worth doing. Then clear any
+   remaining `input_number.proverb_interval_s` series under Developer Tools ->
+   Statistics.
+
+Adding or removing the package needs a full restart rather than a reload:
+`command_line`, `input_boolean`, `input_number` and `timer` may not be loaded
+at all beforehand, and `homeassistant.reload_all` cannot bootstrap an
+integration that was never set up.
 
 ## Retire the shell loop
 
