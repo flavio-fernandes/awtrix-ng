@@ -9,19 +9,33 @@ No copy or reimplementation of that blueprint is included here.
 1. Enable the MQTT integration and configure your AWTRIX NG display on the same
    broker. Install the notification blueprint yourself at
    `smarthomejunkie/awtrix_ng/awtrix_ng_create_notification.yaml`.
-2. Copy `packages/proverbs.yaml` to `/config/packages/proverbs.yaml`. Merge this
-   into your existing `configuration.yaml` (do not duplicate `homeassistant:`):
+2. Copy the whole `packages/proverbs/` directory to
+   `/config/packages/proverbs/`, so that `proverbs.yaml` and the `proverbs.txt`
+   from step 3 sit together. Merge this into your existing
+   `configuration.yaml` (do not duplicate `homeassistant:`):
 
    ```yaml
    homeassistant:
-     packages: !include_dir_named packages
+     packages:
+       proverbs: !include packages/proverbs/proverbs.yaml
    automation: !include automations.yaml
    ```
+
+   One explicit `!include` per package, rather than
+   `packages: !include_dir_named packages`, for two reasons: it is what lets a
+   package keep data files beside its yaml, and `!include_dir_named` finds a
+   nested `packages/proverbs/proverbs.yaml` only because HA's loader happens
+   to walk subdirectories, which is not documented. Add one line per package.
+
+   If a top-level `template:` or `automation:` include already exists, the
+   package merges into it: both domains are list-based, so entries are
+   appended. `script:` is a mapping and would collide.
 
 3. Download the source list from a shell that can write HA's config directory:
 
    ```sh
-   curl --fail --location https://raw.githubusercontent.com/alltom/proverb/master/proverbs.txt --output /config/proverbs.txt
+   curl --fail --location https://raw.githubusercontent.com/alltom/proverb/master/proverbs.txt \
+     --output /config/packages/proverbs/proverbs.txt
    ```
 
    The command-line integration needs `shuf` and `tr` (available in the official

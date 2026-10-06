@@ -1,9 +1,11 @@
-# Package: enable with homeassistant.packages (see ../README.md).
+# Package: enable with homeassistant.packages (see ../../README.md).
+# This file and its proverbs.txt live together in one per-package folder, so
+# install copies the whole packages/proverbs/ directory.
 command_line:
   - sensor:
       name: Proverb
       unique_id: awtrix_proverb
-      command: "shuf -n 1 /config/proverbs.txt | tr -d '\\r'"
+      command: "shuf -n 1 /config/packages/proverbs/proverbs.txt | tr -d '\\r'"
       # Slice in Jinja, not cut: 250 Unicode characters, not 250 bytes.
       value_template: "{{ value[:250] }}"
       scan_interval: 31536000

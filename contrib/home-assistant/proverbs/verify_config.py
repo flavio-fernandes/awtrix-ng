@@ -12,6 +12,9 @@ import yaml
 
 ROOT = Path(__file__).parent
 CONFIG = Path('/config')
+# The package and its proverbs.txt share one folder, so the same relative path
+# works in the repo and under /config.
+PACKAGE = 'packages/proverbs/proverbs.yaml'
 INPUTS = '''awtrix_displays extra_prefixes toggle_helper notification_text my_icon
 icon_mode text_case background_color text_color gradient_1 gradient_2 show_rainbow
 notification_name play_alert_tone sound_name sound_rtttl hold_notification repeat
@@ -19,11 +22,12 @@ duration stack scroll scrollspeed effect'''.split()
 
 
 def prepare(automation):
-    (CONFIG / 'packages').mkdir(parents=True, exist_ok=True)
-    shutil.copy(ROOT / 'packages/proverbs.yaml', CONFIG / 'packages/proverbs.yaml')
+    (CONFIG / 'packages/proverbs').mkdir(parents=True, exist_ok=True)
+    shutil.copy(ROOT / PACKAGE, CONFIG / PACKAGE)
     shutil.copy(ROOT / automation, CONFIG / 'automations.yaml')
     (CONFIG / 'configuration.yaml').write_text(
-        'homeassistant:\n  packages: !include_dir_named packages\n'
+        'homeassistant:\n  packages:\n'
+        f'    proverbs: !include {PACKAGE}\n'
         'automation: !include automations.yaml\n')
     stub = CONFIG / 'blueprints/automation/smarthomejunkie/awtrix_ng/awtrix_ng_create_notification.yaml'
     stub.parent.mkdir(parents=True, exist_ok=True)
@@ -32,7 +36,8 @@ def prepare(automation):
                       'input': {name: {'default': None} for name in INPUTS}},
         'triggers': [], 'actions': [],
     }))
-    (CONFIG / 'proverbs.txt').write_text('A rolling stone gathers no moss.\r\n')
+    (CONFIG / PACKAGE).parent.joinpath('proverbs.txt').write_text(
+        'A rolling stone gathers no moss.\r\n')
 
 
 async def templates():
@@ -41,7 +46,7 @@ async def templates():
     from homeassistant.util import dt
     from datetime import timedelta
     hass = HomeAssistant(str(CONFIG))
-    package = yaml.safe_load((ROOT / 'packages/proverbs.yaml').read_text())
+    package = yaml.safe_load((ROOT / PACKAGE).read_text())
     pacing = package['automation'][0]
     motion = pacing['actions'][1]['value_template']
     entity = pacing['variables']['motion_entity']

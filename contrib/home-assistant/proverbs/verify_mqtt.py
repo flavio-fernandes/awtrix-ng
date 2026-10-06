@@ -14,6 +14,7 @@ import urllib.request
 import yaml
 
 ROOT = Path(__file__).parent
+PACKAGE = 'packages/proverbs/proverbs.yaml'
 
 
 def prepare():
@@ -31,7 +32,7 @@ async def colours():
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.template import Template
     hass = HomeAssistant('/tmp/h1-template')
-    package = yaml.safe_load((ROOT / 'packages/proverbs.yaml').read_text())
+    package = yaml.safe_load((ROOT / PACKAGE).read_text())
     result = [Template(s['state'], hass).async_render() for s in package['template'][0]['sensor']]
     await hass.async_stop()
     return result
