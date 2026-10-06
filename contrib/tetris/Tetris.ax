@@ -1,0 +1,255 @@
+# @name Tetris
+
+# @desc Memory-optimized self-playing Tetris, sized to the panel
+
+# @version 1.3
+
+# @author mckdoubleu
+
+import math
+class Tetris
+  var w
+  var h
+  var hi
+  var b
+  var top
+  var bot
+  var s
+  var st
+  var rc
+  var c
+  var p
+  var r
+  var m
+  var x
+  var y
+  var tx
+  var tr
+  var last
+  var n
+  def init()
+    self.w=width()
+    self.h=height()
+    if self.w<4 || self.h<4
+      self.w=32
+      self.h=8
+    end
+    self.b=bytes(-(self.w*self.h))
+    self.top=bytes(-self.w)
+    self.bot=bytes(-4)
+    self.s=bytes("00F0444400660072026202700232007406220170022300710226047003220036046200630264")
+    self.st=bytes("000203070B0F11")
+    self.rc=bytes("02010404040202")
+    self.c=bytes("0000E5FF00FFD80000B84DFF00FF8A00003366FF0031D15800FF3040")
+    self.spawn(true)
+  end
+  def hit(m,ox,oy)
+    var w=self.w
+    for py : 0 .. 3
+      for px : 0 .. 3
+        if (m & (1 << (py*4+px)))!=0
+          var xx=ox+px
+          var yy=oy+py
+          if xx<0 || xx>=w || yy>=self.h
+            return true
+          end
+          if yy>=0 && self.b[yy*w+xx]!=0
+            return true
+          end
+        end
+      end
+    end
+    return false
+  end
+  def spawn(reset)
+    var w=self.w
+    var h=self.h
+    if reset
+      for i : 0 .. w*h-1 self.b[i]=0 end
+      for i : 0 .. w-1 self.top[i]=h end
+      self.hi=h
+    end
+    self.p=math.rand()%7
+    var best=99999
+    var ok=false
+    var start=self.st[self.p]
+    var cnt=self.rc[self.p]
+    for rr : 0 .. cnt-1
+      var mm=self.s.get((start+rr)*2,-2)
+      for q : 0 .. 3 self.bot[q]=255 end
+      var l=4
+      var z=-1
+      var pt=4
+      for py : 0 .. 3
+        for px : 0 .. 3
+          if (mm & (1 << (py*4+px)))!=0
+            self.bot[px]=py
+            if px<l l=px end
+            if px>z z=px end
+            if py<pt pt=py end
+          end
+        end
+      end
+      for ox : 0-l .. w-1-z
+        var land=99
+        for px : 0 .. 3
+          if self.bot[px]!=255
+            var q=self.top[ox+px]-1-self.bot[px]
+            if q<land land=q end
+          end
+        end
+        if land+pt>=0
+          var gaps=0
+          var touch=0
+          for px : 0 .. 3
+            if self.bot[px]!=255
+              var g=self.top[ox+px]-1-(land+self.bot[px])
+              gaps+=g
+              if g==0 touch+=1 end
+            end
+          end
+          var score=gaps*120-touch*5+(h-land)*2+(math.rand()%3)
+          if score<best
+            best=score
+            self.tx=ox
+            self.tr=rr
+            ok=true
+          end
+        end
+      end
+    end
+    if !ok
+      self.spawn(true)
+      return
+    end
+    self.r=math.rand()%cnt
+    self.m=self.s.get((start+self.r)*2,-2)
+    var mid=(w-4)/2
+    var d=2+(math.rand()%4)
+    if self.tx<mid
+      self.x=self.tx+d
+    elif self.tx>mid
+      self.x=self.tx-d
+    elif (math.rand()%2)==0
+      self.x=self.tx+d
+    else
+      self.x=self.tx-d
+    end
+    var l=4
+    var z=-1
+    for py : 0 .. 3
+      for px : 0 .. 3
+        if (self.m & (1 << (py*4+px)))!=0
+          if px<l l=px end
+          if px>z z=px end
+        end
+      end
+    end
+    if self.x<0-l self.x=0-l end
+    if self.x>w-1-z self.x=w-1-z end
+    self.y=-2
+    self.n=0
+    self.last=now_ms()
+  end
+  def step()
+    var w=self.w
+    var h=self.h
+    var start=self.st[self.p]
+    var cnt=self.rc[self.p]
+    if self.r!=self.tr
+      var nr=(self.r+1)%cnt
+      var nm=self.s.get((start+nr)*2,-2)
+      if !self.hit(nm,self.x,self.y)
+        self.r=nr
+        self.m=nm
+      end
+    end
+    if self.x<self.tx
+      if !self.hit(self.m,self.x+1,self.y) self.x+=1 end
+    elif self.x>self.tx
+      if !self.hit(self.m,self.x-1,self.y) self.x-=1 end
+    end
+    self.n+=1
+    if self.n<2 return end
+    self.n=0
+    if !self.hit(self.m,self.x,self.y+1)
+      self.y+=1
+      return
+    end
+    for py : 0 .. 3
+      for px : 0 .. 3
+        if (self.m & (1 << (py*4+px)))!=0
+          var xx=self.x+px
+          var yy=self.y+py
+          if yy<0
+            self.spawn(true)
+            return
+          end
+          self.b[yy*w+xx]=self.p+1
+        end
+      end
+    end
+    var yy=h-1
+    while yy>=0
+      var full=true
+      for xx : 0 .. w-1
+        if self.b[yy*w+xx]==0
+          full=false
+          break
+        end
+      end
+      if full
+        var q=yy
+        while q>0
+          for xx : 0 .. w-1
+            self.b[q*w+xx]=self.b[(q-1)*w+xx]
+          end
+          q-=1
+        end
+        for xx : 0 .. w-1 self.b[xx]=0 end
+      else
+        yy-=1
+      end
+    end
+    self.hi=h
+    for xx : 0 .. w-1
+      self.top[xx]=h
+      for q : 0 .. h-1
+        if self.b[q*w+xx]!=0
+          self.top[xx]=q
+          if q<self.hi self.hi=q end
+          break
+        end
+      end
+    end
+    self.spawn(false)
+  end
+  def draw()
+    var w=self.w
+    var h=self.h
+    clear(0)
+    var t=now_ms()
+    if t-self.last>=65
+      self.last=t
+      self.step()
+    end
+    for yy : self.hi .. h-1
+      for xx : 0 .. w-1
+        var v=self.b[yy*w+xx]
+        if v!=0 pixel(xx,yy,self.c.get((v-1)*4,-4)) end
+      end
+    end
+    for py : 0 .. 3
+      for px : 0 .. 3
+        if (self.m & (1 << (py*4+px)))!=0
+          var xx=self.x+px
+          var yy=self.y+py
+          if xx>=0 && xx<w && yy>=0 && yy<h
+            pixel(xx,yy,self.c.get(self.p*4,-4))
+          end
+        end
+      end
+    end
+  end
+end
+return Tetris()
