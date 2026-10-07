@@ -177,8 +177,9 @@ notifications, light sensor, Wi-Fi join, mDNS and NTP, HTTP smoke testing (every
 API check passes; the 80-request burst depends on the Wi-Fi link), watchdog
 recovery (`resetReason: "watchdog"`), settings kept across application UF2
 updates, the scripting figures above, and MQTT with real Home Assistant
-discovery (21 entities, Matrix light control, notifications). The buttons and
-hearing a melody are not yet checked on that board.
+discovery (21 entities, Matrix light control, notifications), A/B/C events,
+brightness, volume, Sleep, hearing inline and stored melodies, and the A+C
+`NOSCR` rescue.
 
 See [driver details](galactic-unicorn-display.md) and
 [LittleFS persistence](pico-persistence.md) for implementation constraints.
