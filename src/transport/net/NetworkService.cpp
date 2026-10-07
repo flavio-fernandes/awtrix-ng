@@ -270,12 +270,17 @@ void NetworkService::begin(const DeviceConfig& cfg, bool forceAp,
 }
 
 void NetworkService::startAp(const char* why) {
+#if defined(AWTRIX_PLATFORM_RP2040)
+  if (!platform::pico::startAp(WiFi, WIFI_AP_STA, hostname_.c_str()))
+    logf("wifi: provisioning AP \"%s\" did not start", hostname_.c_str());
+#else
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(hostname_.c_str());
+#endif
   dns_.setErrorReplyCode(DNSReplyCode::NoError);
   dns_.start(53, "*", WiFi.softAPIP());
   logf("wifi: %s, provisioning AP \"%s\" at %s (captive portal)", why, hostname_.c_str(),
-       WiFi.softAPIP().toString().c_str());
+       ip().c_str());
 #if defined(AWTRIX_PLATFORM_RP2040)
   // The first station-only retry is a full interval after the AP comes up, not after boot.
   lastApRetryMs_ = millis();
@@ -365,7 +370,9 @@ void NetworkService::retryJoinFromAp() {
   logf("wifi: pausing the provisioning AP for a station-only join");
   dns_.stop();
   apPaused_ = true;
-  joinStation(*cfg_, false);  // WIFI_STA: arduino-pico's begin() tears the AP down
+  // The core's station-only begin() leaves the AP up; stop it, so startAp() restarts it cleanly.
+  WiFi.disconnectAP();
+  joinStation(*cfg_, false);
 #else
   if (WiFi.softAPgetStationNum() > 0) return;
   const unsigned long now = millis();
@@ -386,7 +393,11 @@ void NetworkService::retryJoinFromAp() {
 bool NetworkService::isConnected() const { return !apMode_ && WiFi.status() == WL_CONNECTED; }
 
 std::string NetworkService::ip() const {
+#if defined(AWTRIX_PLATFORM_RP2040)
+  return platform::pico::addressText(apMode_ ? WiFi.softAPIP() : WiFi.localIP());
+#else
   return std::string((apMode_ ? WiFi.softAPIP() : WiFi.localIP()).toString().c_str());
+#endif
 }
 
 }

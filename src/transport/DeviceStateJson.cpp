@@ -4,6 +4,7 @@
 #if defined(AWTRIX_PLATFORM_RP2040)
 #include <malloc.h>
 #include <unistd.h>
+#include "platform/rp2040/WifiCompat.h"
 #else
 #include <esp_heap_caps.h>
 #endif
@@ -38,7 +39,11 @@ std::string buildDeviceStateJson(CoreEngine& engine, IBoard& board, const std::s
   facts.boardType = kBoardType;
   facts.soc = pins::activeProfile().id;
   facts.updateImage = kUpdateImageName;
+#if defined(AWTRIX_PLATFORM_RP2040)
+  facts.ipAddress = platform::pico::addressText(WiFi.localIP());
+#else
   facts.ipAddress = std::string(WiFi.localIP().toString().c_str());
+#endif
   const char* hn = WiFi.getHostname();
   facts.hostname = hn ? hn : "";
   facts.wifiRssi = WiFi.RSSI();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 // Template seam keeps arduino-pico's differing API contract host-testable.
 // No board includes: callers supply WiFi, IPAddress and the mode constants.
@@ -52,5 +53,24 @@ void join(Wifi& wifi, Mode mode, const char* ssid, const char* password) {
   // still power-save mode 2, which drops links on some mesh routers. begin() can re-initialise the
   // radio, so apply it after every join.
   wifi.noLowPowerMode();
+}
+
+// The pinned core's station-only begin() stops only the station, so the provisioning AP keeps
+// running through a "paused" join. A second softAP() on a running AP fails, and its rollback tears
+// the AP down: after the first failed retry the setup network was gone (softAPIP() unset). Stop the
+// AP first so every start is a clean one. Returns whether the AP came up with an address.
+template <class Wifi, class Mode>
+bool startAp(Wifi& wifi, Mode apSta, const char* name) {
+  wifi.disconnectAP();
+  wifi.mode(apSta);
+  wifi.softAP(name);
+  return static_cast<bool>(wifi.softAPIP());
+}
+
+// The core prints an unset address as "(IP unset)" where ESP32 prints "0.0.0.0". Callers read
+// "0.0.0.0" as "no address"; the web UI switches to its Wi-Fi form on it in setup mode.
+template <class Address>
+std::string addressText(const Address& ip) {
+  return ip ? std::string(ip.toString().c_str()) : std::string("0.0.0.0");
 }
 }

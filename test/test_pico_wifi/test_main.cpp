@@ -25,6 +25,12 @@ struct Wifi {
   void scanDelete() { ++scanDeletes; }
   int powerSaveOffs = 0;
   void noLowPowerMode() { ++powerSaveOffs; }
+  // Pinned core: softAP() on a running AP fails and rolls the AP back down.
+  bool apUp = false; int apStarts = 0;
+  bool disconnectAP() { const bool was = apUp; apUp = false; return was; }
+  bool softAP(const char*) { ++apStarts; apUp = !apUp; return apUp; }
+  struct Addr { bool set; explicit operator bool() const { return set; } };
+  Addr softAPIP() const { return Addr{apUp}; }
   void begin(const char* s, const char* p, const uint8_t* bssid = nullptr) {
     // Pinned arduino-pico _beginInternal: end() unless AP_STA, then sets STA.
     if (current != ApSta) ++apTearDowns;
@@ -77,6 +83,27 @@ void a_join_in_progress_is_not_restarted_before_its_timeout() {
   TEST_ASSERT_FALSE(joinDue(5000, 0xFFFFF000u, true, 15000));  // millis() wrapped: 9096 ms elapsed
   TEST_ASSERT_TRUE(joinDue(12000, 0xFFFFF000u, true, 15000));  // 16096 ms elapsed
 }
+void ap_restarts_cleanly_after_a_paused_join() {
+  using awtrix::platform::pico::startAp;
+  Wifi w;
+  TEST_ASSERT_TRUE(startAp(w, Wifi::ApSta, "awtrixng-aabbcc"));  // first start
+  TEST_ASSERT_EQUAL(Wifi::ApSta, w.current);
+  awtrix::platform::pico::join(w, Wifi::Sta, "saved", "");     // station-only join leaves the AP up
+  TEST_ASSERT_TRUE(w.apUp);
+  TEST_ASSERT_TRUE(startAp(w, Wifi::ApSta, "awtrixng-aabbcc"));  // the bug: this second start failed
+  TEST_ASSERT_TRUE(w.apUp);
+  TEST_ASSERT_EQUAL(2, w.apStarts);
+}
+struct Ip {
+  bool set; const char* text;
+  explicit operator bool() const { return set; }
+  std::string toString() const { return text; }
+};
+void unset_address_reads_as_zeros() {
+  using awtrix::platform::pico::addressText;
+  TEST_ASSERT_EQUAL_STRING("0.0.0.0", addressText(Ip{false, "(IP unset)"}).c_str());
+  TEST_ASSERT_EQUAL_STRING("192.168.4.1", addressText(Ip{true, "192.168.4.1"}).c_str());
+}
 void default_ap_and_mdns_share_mac_suffix() {
   const auto name = awtrix::net::effectiveHostname("", "00:11:22:AA:BB:CC");
   TEST_ASSERT_EQUAL_STRING("awtrixng-aabbcc", name.c_str());
@@ -92,6 +119,8 @@ int main() {
   RUN_TEST(station_reconnect_uses_stored_credentials);
   RUN_TEST(join_never_pins_a_bssid_or_scans);
   RUN_TEST(a_join_in_progress_is_not_restarted_before_its_timeout);
+  RUN_TEST(ap_restarts_cleanly_after_a_paused_join);
+  RUN_TEST(unset_address_reads_as_zeros);
   RUN_TEST(default_ap_and_mdns_share_mac_suffix);
   return UNITY_END();
 }
