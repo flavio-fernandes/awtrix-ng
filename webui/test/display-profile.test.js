@@ -143,7 +143,19 @@ async function testPanelHeight() {
   window.close();
 }
 
+async function testPendingHeight() {
+  const {window}=await boot({canvasContext:context(),system:{...system,panelWidth:32,panels:1,panelHeight:16},caps:{transitions:[],audio,
+    display:{width:32,height:8,configurable:true,minWidth:32,maxWidth:128,minHeight:8,maxHeight:16,maxPixels:2048,
+      requestedWidth:32,requestedHeight:16,restartRequired:true}}});
+  await goto(window,'#/system');
+  const panel=window.document.querySelector('#sec-panel');
+  assert(panel.textContent.includes('32 × 16 = 512'),'pending height uses the configured size');
+  assert(panel.textContent.includes('Active: 32 × 8'),'height-only change shows the active size and restart notice');
+  window.close();
+}
+
 async function main() {
+  await testPendingHeight();
   await testFixedNativeDisplay();
   await testLegacyControlsAndGeometry();
   await testFrameDimensionsOverrideCapabilities();
