@@ -21,9 +21,9 @@ void loadSettings(Settings& s) {
   settingsblob::apply(s, blob);
 }
 
-void saveSettings(const Settings& s) {
+bool saveSettings(const Settings& s) {
   const std::string out = settingsblob::encode(s);
-  host::persistence::save(host::persistence::Document::Settings, out);
+  return host::persistence::save(host::persistence::Document::Settings, out);
 }
 
 }

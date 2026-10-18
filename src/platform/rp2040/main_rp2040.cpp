@@ -427,8 +427,9 @@ void loop() {
   g_netWasConnected = netConnected;
   // Collapses a burst of settings changes into one write; every write costs flash erase budget.
   if (g_settingsDirty && g_storageReady && !g_system.rebootPending && g_settingsSaver.due(now)) {
-    nvs::saveSettings(g_runtime->engine().state().settings());
-    g_settingsDirty = false;
+    // A failed commit (LittleFS full, a transient open or rename error) stays dirty and is retried
+    // after the saver's interval, instead of silently reverting at the next boot.
+    if (nvs::saveSettings(g_runtime->engine().state().settings())) g_settingsDirty = false;
     g_settingsSaver.saved(now);
   }
   g_runtime->tick(now, g_scripts);

@@ -88,10 +88,22 @@ void config_and_settings_reboot_roundtrip() {
   Settings settings;
   settings.applyRead(api::JsonReader(R"({"brightness":42})"));
   TEST_ASSERT_EQUAL(42, settings.brightness);
-  nvs::saveSettings(settings);
+  TEST_ASSERT_TRUE(nvs::saveSettings(settings));
   Settings loaded;
   nvs::loadSettings(loaded);
   TEST_ASSERT_EQUAL(42, loaded.brightness);
+  // A commit that fails is reported, so the caller keeps the change dirty and retries.
+  Settings changed = settings;
+  changed.applyRead(api::JsonReader(R"({"brightness":77})"));
+  failRename = true;
+  TEST_ASSERT_FALSE(nvs::saveSettings(changed));
+  failRename = false;
+  Settings kept;
+  nvs::loadSettings(kept);
+  TEST_ASSERT_EQUAL(42, kept.brightness);
+  TEST_ASSERT_TRUE(nvs::saveSettings(changed));
+  nvs::loadSettings(kept);
+  TEST_ASSERT_EQUAL(77, kept.brightness);
   std::string a, b;
   api::JsonWriter wa(a), wb(b);
   settings.writeMembers(wa);

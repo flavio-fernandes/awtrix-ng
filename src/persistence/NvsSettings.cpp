@@ -24,12 +24,17 @@ void loadSettings(Settings& s) {
   settingsblob::apply(s, std::string_view(blob.c_str(), blob.length()));
 }
 
-void saveSettings(const Settings& s) {
+bool saveSettings(const Settings& s) {
   const std::string out = settingsblob::encode(s);
   Preferences p;
-  p.begin(kNs, false);
-  p.putString(kKey, out.c_str());
+  const bool wrote = p.begin(kNs, false) && p.putString(kKey, out.c_str()) == out.size();
+#if defined(AWTRIX_PLATFORM_RP2040)
+  // The Pico commits the namespace file at end(), so that is where a full or failing LittleFS shows.
+  return p.end() && wrote;
+#else
   p.end();
+  return wrote;
+#endif
 }
 
 }
