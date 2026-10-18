@@ -2541,6 +2541,7 @@ sensors<!-- /only -->. Read the names here instead of writing them into your cod
 | `sensors` | - | which sensors the device has. See below |
 | `gpio` | - | always `null`: the pins of this clock are fixed |
 <!-- /only -->
+| `browserOta` | - | `true` when this firmware installs an update through `POST /update`, so the web UI offers Download & install and the firmware upload. `false` where updates go over USB |
 | `scriptUpdates` | - | always `true`: [script updates](#script-updates) are supported |
 | `scripting` | - | `true` when this firmware has scripting. Without it every script route answers `503 unavailable` |
 

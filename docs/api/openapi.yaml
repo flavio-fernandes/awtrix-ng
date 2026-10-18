@@ -2079,6 +2079,7 @@ paths:
                     type: object
                     properties:
                       id: {type: string, description: 'Platform identity.'}
+                  browserOta: {type: boolean, description: "This firmware installs an update through POST /update. False where updates go over USB."}
                   scriptUpdates: {type: boolean, description: The compare-and-update script route is available.}
                   scripting: {type: boolean, description: "This firmware has scripting. Without it every script route answers 503 unavailable before any body is read."}
                   ble: {x-only: [tc002], type: boolean, enum: [true], description: "Present only where scripts can import ble. Radio health is reported by ble.state()."}

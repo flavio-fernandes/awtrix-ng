@@ -37,7 +37,7 @@ const { boot, goto, flush, until } = require('./harness');
   }
   // A page opened straight on a gated route is drawn before /device and /capabilities answer.
   // Each gated view waits for them itself, so a Pico never ends up showing what it lacks.
-  const pico = { scripting: false, transitions: [],
+  const pico = { scripting: false, browserOta: false, transitions: [],
     audio: { rtttl: true, track: false, mp3: false, radio: false } };
   for (const [route, device, capabilities] of [['#/audio', 300, 600], ['#/audio', 600, 300],
                                                ['#/system', 300, 600], ['#/system', 600, 300]]) {

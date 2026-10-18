@@ -22,7 +22,7 @@ const install = window => window.document.getElementById('upd-install');
 const binUpload = window => window.document.querySelector('input[type=file][accept=".bin"]');
 
 async function openSystem(opts) {
-  const ctx = await boot();
+  const ctx = await boot(opts.caps ? { caps: Object.assign({ transitions: [] }, opts.caps) } : undefined);
   ctx.window.localStorage.clear();
   ctx.store.githubLatest = opts.latest;
   if (opts.device) Object.assign(ctx.store.device, opts.device);
@@ -54,7 +54,8 @@ async function testNewerReleaseOffersTheMatchingFile() {
 
 async function testUsbOnlyBoardIsNotOfferedABrowserInstall() {
   for (const image of ['firmware-galactic-unicorn.uf2', 'firmware-galactic-unicorn-2w.uf2']) {
-    const { window } = await openSystem({ latest: release('v1.1.2'), device: { updateImage: image } });
+    const { window } = await openSystem({ latest: release('v1.1.2'), device: { updateImage: image },
+      caps: { browserOta: false } });
     assert(/1\.1\.2/.test(status(window).textContent) && /USB/.test(status(window).textContent),
       image + ': the newer release is named, with how to install it');
     assert(install(window).textContent === 'Check for updates', image + ': no Download & install, which would always fail');
@@ -65,6 +66,18 @@ async function testUsbOnlyBoardIsNotOfferedABrowserInstall() {
   }
 }
 
+// A new ESP32 variant needs no web UI change: browserOta, not a list of image names, decides.
+async function testUnknownBinImageWithBrowserOtaIsOffered() {
+  const image = 'firmware-awtrix-ng-c6.bin';
+  const latest = release('v1.1.2');
+  latest.assets.push({ name: image, browser_download_url: 'https://github.com/Blueforcer/awtrix-ng/releases/download/v1.1.2/' + image });
+  const { window } = await openSystem({ latest, device: { updateImage: image }, caps: { browserOta: true } });
+  assert(install(window) && !install(window).disabled && install(window).textContent !== 'Check for updates',
+    image + ': Download & install is offered');
+  assert(!!binUpload(window), image + ': the .bin upload is offered');
+  assert(!/BOOTSEL/.test(window.document.body.textContent), image + ': no USB route');
+  window.close();
+}
 async function testSameVersionIsUpToDate() {
   const { window } = await openSystem({ latest: release('v1.1.1') });
   assert(status(window) && /1\.1\.1/.test(status(window).textContent) && !/1\.1\.2/.test(status(window).textContent),
@@ -231,6 +244,7 @@ async function main() {
   await testRejectedFirmwareAllowsRetry();
   await testNewerReleaseOffersTheMatchingFile();
   await testUsbOnlyBoardIsNotOfferedABrowserInstall();
+  await testUnknownBinImageWithBrowserOtaIsOffered();
   await testSameVersionIsUpToDate();
   await testPrereleaseDoesNotCount();
   await testCheckIsCachedAcrossVisits();

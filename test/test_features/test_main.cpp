@@ -153,6 +153,9 @@ static void capabilities() {
   const auto json = api::capabilitiesJson({}, {}, {}, audio.caps(), &platform);
   TEST_ASSERT_TRUE(json.find("\"scripting\":false") != std::string::npos);
   TEST_ASSERT_TRUE(json.find("\"scriptUpdates\":false") != std::string::npos);
+  // The build's FeatureSet flag; the web UI offers a browser update only where it is true.
+  TEST_ASSERT_TRUE(json.find("\"browserOta\":false") != std::string::npos);
+  TEST_ASSERT_TRUE(api::capabilitiesJson({}, {}, {}, audio.caps()).find("\"browserOta\":true") != std::string::npos);
   TEST_ASSERT_TRUE(json.find("\"mp3\":false") != std::string::npos);
   TEST_ASSERT_TRUE(json.find("\"radio\":false") != std::string::npos);
   TEST_ASSERT_TRUE(api::capabilitiesJson({}, {}, {}, audio.caps()).find("\"scripting\":true") != std::string::npos);

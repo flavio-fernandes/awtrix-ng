@@ -51,7 +51,8 @@ inline std::string capabilitiesJson(const std::vector<std::string>& effects,
   }
   writer.member("clip", audio.clip).endObject();
   const FeatureSet features = platform ? platform->features : FeatureSet{};
-  writer.member("microphone", caps.has("microphone")).member("scriptUpdates", features.scripting)
+  writer.member("browserOta", features.browserOta)
+      .member("microphone", caps.has("microphone")).member("scriptUpdates", features.scripting)
       .member("scripting", features.scripting).key("gpio");
   if (platform && !platform->configurableGpio && platform->fixedGpio)
     writer.raw(pins::toJson(*platform->fixedGpio));
