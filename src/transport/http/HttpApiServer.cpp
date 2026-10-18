@@ -21,6 +21,8 @@
 #include "core/CoreEngine.h"
 #include "core/ProvisioningPolicy.h"
 #include "core/api/ApiRouter.h"
+#include "core/api/FeaturePolicy.h"
+#include "platform/BuildFeatures.h"
 #include "core/api/AssetApi.h"
 #include "core/api/HttpProtocol.h"
 #include "core/api/FilesApi.h"
