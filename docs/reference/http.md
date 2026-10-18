@@ -195,8 +195,9 @@ MQTT command that exists only for that feature (`/api/v1/scripts/...`, `/api/v1/
 `/api/v1/apps/script-update/...`, a script's `/config` and `/data`, `/api/v1/audio/mp3`,
 `/api/v1/audio/stations`, `cmd/audio/stations`, `/update`) answers `503 unavailable` before any
 body is read. `/api/v1/audio/play` and `cmd/audio/play` are shared: a sound that needs the missing
-feature (a file, a station, an `https://` address) answers `503 unavailable` once the body is
-parsed, before anything plays, while the other sounds keep working.
+feature (an MP3 address or a script's `Script/name` sound, a station, an `https://` address)
+answers `503 unavailable` once the body is parsed, before anything plays, while the other sounds
+keep working. A bare `file` name stays playable without MP3, because it can name a saved melody.
 [`scripting`](#get-apiv1capabilities) in capabilities and the `audio` flags say what this build has.
 <!-- /only -->
 

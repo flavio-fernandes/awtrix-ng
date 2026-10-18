@@ -47,8 +47,11 @@ inline bool playable(const FeatureSet& features, const sound::Spec& spec) {
   switch (spec.kind) {
     case sound::Kind::Station:
       return features.radio && (features.outboundTls || !needsTls(spec.text));
+    // As AudioRouter::missingOutput: an address and "Script/name" are MP3s alone, while a bare
+    // name may also be a saved melody, which the tone output plays.
     case sound::Kind::File:
-      return features.mp3 && (features.outboundTls || !needsTls(spec.text));
+      if (sound::isUrl(spec.text)) return features.mp3 && (features.outboundTls || !needsTls(spec.text));
+      return features.mp3 || spec.text.find('/') == std::string::npos;
     default:
       return true;
   }

@@ -30,11 +30,11 @@ static void http_profiles() {
       {"GET", "/api/v1/audio/stations", ""},
       {"PUT", "/api/v1/audio/stations", "{\"stations\":[]}"},
       {"PUT", "/api/v1/audio/stations", "not json"},
-      {"POST", "/api/v1/audio/play", "{\"file\":\"demo\"}"},
+      {"POST", "/api/v1/audio/play", "{\"file\":\"Demo/x\"}"},
       {"POST", "/api/v1/audio/play", "{\"station\":\"demo\"}"},
       {"POST", "/api/v1/audio/play", "{\"station\":0}"},
       {"POST", "/api/v1/audio/play", "{\"file\":\"https://example.com/live.mp3\"}"},
-      {"POST", "/api/v1/audio/play", "[{\"file\":\"demo\"},{\"file\":\"https://example.com/a.mp3\"}]"},
+      {"POST", "/api/v1/audio/play", "[{\"file\":\"Demo/x\"},{\"file\":\"https://example.com/a.mp3\"}]"},
       {"GET", "/update", ""}, {"POST", "/update", "binary"},
   };
   for (const auto& req : requests) {
@@ -60,6 +60,10 @@ static void http_profiles() {
       {"POST", "/api/v1/device/reboot", ""},
       {"POST", "/api/v1/audio/play", "{\"rtttl\":\"x:d=4,o=5,b=100:c\"}"},
       {"POST", "/api/v1/audio/play", "[{\"file\":\"demo\"},{\"rtttl\":\"x:d=4,o=5,b=100:c\"}]"},
+      // A bare name may be a saved melody, which the tone output plays (as PR 1's Auto source).
+      {"POST", "/api/v1/audio/play", "{\"file\":\"demo\"}"},
+      {"POST", "/api/v1/audio/play", "\"demo\""},
+      {"POST", "/api/v1/audio/play", "[{\"file\":\"demo\"},{\"file\":\"https://example.com/a.mp3\"}]"},
       {"PATCH", "/api/v1/apps/builtin/Time/config", "{}"},
   };
   for (const auto& req : supported) {
@@ -77,7 +81,7 @@ static void http_profiles() {
 }
 
 static void mqtt_profiles() {
-  const char* payloads[] = {"{\"file\":\"demo\"}", "{\"station\":\"demo\"}",
+  const char* payloads[] = {"{\"file\":\"Demo/x\"}", "{\"station\":\"demo\"}",
       "{\"station\":0}", "{\"file\":\"https://example.com/live.mp3\"}"};
   for (const auto payload : payloads) {
     Command cmd;
@@ -95,9 +99,11 @@ static void mqtt_profiles() {
       static_cast<int>(api::routeMqtt("cmd/audio/stations", body, cmd, result, pico)));
   TEST_ASSERT_EQUAL_STRING(api::mqttResult(DispatchResult::Unavailable, {}).c_str(), result.c_str());
   TEST_ASSERT_TRUE(api::isResultEcho("cmd/audio/stations/result"));
-  body = "{\"rtttl\":\"x:d=4,o=5,b=100:c\"}";
-  TEST_ASSERT_EQUAL_INT(static_cast<int>(api::RouteOutcome::Routed),
-      static_cast<int>(api::routeMqtt("cmd/audio/play", body, cmd, result, pico)));
+  for (const char* playable : {"{\"rtttl\":\"x:d=4,o=5,b=100:c\"}", "{\"file\":\"demo\"}", "\"demo\""}) {
+    body = playable;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(static_cast<int>(api::RouteOutcome::Routed),
+        static_cast<int>(api::routeMqtt("cmd/audio/play", body, cmd, result, pico)), playable);
+  }
   FeatureSet noTls;
   noTls.outboundTls = false;
   api::HttpResult response;
