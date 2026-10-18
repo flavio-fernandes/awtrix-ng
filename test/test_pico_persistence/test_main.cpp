@@ -256,6 +256,25 @@ void fixed_board_system_config() {
   TEST_ASSERT_TRUE(put(R"({"panelHeight":8})", sysconfig::Origin::Restore));
   TEST_ASSERT_EQUAL(8, cfg.panelHeight);
 }
+// Devices running PR 1 already store the height under "pheight", the key older upstream used for
+// the same quantity. A stored value outside 8-16 never reaches a panel: the layout clamps it, and
+// the Unicorn adopts its default 11 rows at boot.
+void stored_panel_height_outside_the_range_is_not_used() {
+  for (int stored : {0, 7, 9, 16, 17, 99, -1}) {
+    Preferences p;
+    TEST_ASSERT_TRUE(p.begin("awtrix-cfg", false));
+    p.putInt("pheight", stored);
+    p.end();
+    DeviceConfig cfg;
+    cfg.load();
+    TEST_ASSERT_EQUAL(stored, cfg.panelHeight);
+    const int layoutHeight = cfg.matrixLayout().panelHeight;
+    TEST_ASSERT_TRUE(layoutHeight >= 8 && layoutHeight <= 16);
+    sysconfig::adoptFixedBoard(cfg, pins::rp2040Profile());
+    TEST_ASSERT_EQUAL(11, cfg.panelHeight);
+  }
+}
+
 void fixed_board_adopted_at_boot() {
   const auto& soc = pins::rp2040Profile();
   // What an earlier build may have stored: another pin map (I2C on 4/5) and panel size.
@@ -293,6 +312,7 @@ int main() {
   RUN_TEST(esp32_backup_keeps_the_pico_wiring);
   RUN_TEST(fixed_board_system_config);
   RUN_TEST(fixed_board_adopted_at_boot);
+  RUN_TEST(stored_panel_height_outside_the_range_is_not_used);
   RUN_TEST(damaged_config_is_saved_afresh);
   return UNITY_END();
 }

@@ -67,6 +67,24 @@ static void test_reply_exposes_configurable_panel_fields() {
   TEST_ASSERT_TRUE(written(seeded(), false).find("\"panelHeight\":11") != std::string::npos);
 }
 
+// "pheight" keeps PR 1's key. A stored height outside 8-16 is not used as is: the layout clamps
+// it into the range (Esp32Board then logs "stored panel layout invalid"), and below 8 the default
+// eight rows apply. A height inside the range is the user's.
+static void test_a_stored_height_outside_the_range_is_not_used() {
+  DeviceConfig cfg;
+  TEST_ASSERT_EQUAL(8, cfg.matrixLayout().panelHeight);
+  for (int stored : {-1, 0, 7}) {
+    cfg.panelHeight = stored;
+    TEST_ASSERT_EQUAL(8, cfg.matrixLayout().panelHeight);
+  }
+  for (int stored : {17, 99}) {
+    cfg.panelHeight = stored;
+    TEST_ASSERT_EQUAL(16, cfg.matrixLayout().panelHeight);
+  }
+  cfg.panelHeight = 12;
+  TEST_ASSERT_EQUAL(12, cfg.matrixLayout().panelHeight);
+}
+
 static void test_secrets_are_omitted_unless_asked_for() {
   const std::string open = written(seeded(), false);
   TEST_ASSERT_TRUE(open.find("hunter2") == std::string::npos);
@@ -180,5 +198,6 @@ int main(int, char**) {
   RUN_TEST(test_enum_fields_travel_by_name);
   RUN_TEST(test_panel_color_order_travels_by_name);
   RUN_TEST(test_the_whole_table_round_trips);
+  RUN_TEST(test_a_stored_height_outside_the_range_is_not_used);
   return UNITY_END();
 }
