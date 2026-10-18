@@ -11,6 +11,8 @@
 #include "platform/rp2040/PicoRestoreSink.h"
 #include "platform/rp2040/AssetProbe.h"
 #include "core/sound/AudioRouter.h"
+#include "core/api/CapabilitiesJson.h"
+#include "platform/rp2040/DisplayProfile.h"
 #include "platform/rp2040/Rp2040Profile.h"
 
 // The production DeviceConfig, NvsSettings, LittleFS adapter and restore sink of the Pico, run
@@ -337,8 +339,33 @@ void saved_melody_is_found_by_bare_name() {
   TEST_ASSERT_EQUAL_STRING("x", tone.asked.c_str());
 }
 
+void capabilities_report_pending_pico_height() {
+  DeviceConfig cfg;
+  cfg.panelHeight = 11;
+  auto check = [&](int active, int requested, bool restart) {
+    PlatformDescriptor platform{"rp2040", pico::displayProfile(53, active, cfg.panelHeight), false};
+    const auto json = api::capabilitiesJson({}, {}, {}, {}, &platform);
+    const auto display = api::memberValue(api::JsonReader(json), "display");
+    long long value = 0;
+    bool pending = false;
+    TEST_ASSERT_TRUE(api::memberValue(display, "height").asLong(value));
+    TEST_ASSERT_EQUAL(active, value);
+    TEST_ASSERT_TRUE(api::memberValue(display, "requestedHeight").asLong(value));
+    TEST_ASSERT_EQUAL(requested, value);
+    TEST_ASSERT_TRUE(api::memberValue(display, "restartRequired").asBool(pending));
+    TEST_ASSERT_EQUAL(restart, pending);
+  };
+  check(11, 11, false);
+  int applied = 0;
+  sysconfig::ApplyError err;
+  TEST_ASSERT_TRUE(sysconfig::apply(cfg, api::JsonReader(R"({"panelHeight":8})"), applied, err));
+  check(11, 8, true);
+  check(8, 8, false); // after reboot, the board and canvas use the saved height
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(capabilities_report_pending_pico_height);
   RUN_TEST(saved_melody_is_found_by_bare_name);
   RUN_TEST(legacy_panel_height_is_ignored_and_removed);
   RUN_TEST(panel_height_uses_fresh_key);
