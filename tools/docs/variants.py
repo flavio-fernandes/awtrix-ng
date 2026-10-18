@@ -1,12 +1,12 @@
 """MkDocs hook: build the documentation for one clock.
 
-AWTRIX_DOCS_VARIANT picks the build: `esp32`, `esp32-s3`, `tc002`, or `root` for the
-small landing site that sits above the three. tools/docs/build_site.py runs all four and
+AWTRIX_DOCS_VARIANT picks the build: `esp32`, `esp32-s3`, `tc002`, `rp2040`, or `root` for
+the small landing site that sits above the four. tools/docs/build_site.py runs all five and
 assembles them; a single `mkdocs serve` needs the variable set.
 
 Authors mark what belongs to which clock:
 
-* a page: front matter `only: [tc002]`. Pages without `only` are in all three clock builds,
+* a page: front matter `only: [tc002]`. Pages without `only` are in all four clock builds,
   never in `root`.
 * a passage: `<!-- only tc002 -->` ... `<!-- /only -->`, several names separated by spaces,
   on lines of their own or inline, nested where a passage narrows further. Markers inside
@@ -48,10 +48,14 @@ CLOCKS = [
     {"name": "ESP32-S3 DIY", "variant": "esp32-s3", "panel": "32–128 × 8",
      "text": "Your own panel on an ESP32-S3 board. With PSRAM and an amplifier board it also "
              "plays MP3s and internet radio."},
+    {"name": "Galactic Unicorn", "variant": "rp2040", "panel": "53 × 11",
+     "text": "Pimoroni's board with a Pico W or Pico 2 W: built-in display, buttons, light "
+             "sensor and a speaker for melodies. Installed over USB."},
 ]
 
 ROOT_ONLY_STATIC = ("firmware/",)
 TC002_ONLY_STATIC = ("assets/tc002/image/",)
+RP2040_ONLY_STATIC = tuple(d + "/" for d in panel_examples.OWN_ASSET_DIRS.values())
 
 CLOCKS_MARKER = re.compile(r"^<!--\s*clocks\s*-->[ \t]*$", re.M)
 HEADING = re.compile(r"^#\s+(.+?)(?:\s+\{[^}]*\})?\s*#*\s*$")
@@ -162,6 +166,8 @@ def on_files(files, config):
         if path.startswith(ROOT_ONLY_STATIC):
             continue
         if variant != "tc002" and path.startswith(TC002_ONLY_STATIC):
+            continue
+        if variant != "rp2040" and path.startswith(RP2040_ONLY_STATIC):
             continue
         if variant == ROOT and path.startswith("api/"):
             continue
