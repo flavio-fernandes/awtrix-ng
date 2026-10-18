@@ -58,6 +58,7 @@
 #include "transport/net/NetworkService.h"
 
 #include <LittleFS.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <hardware/gpio.h>
 #include <pico/rand.h>
