@@ -99,8 +99,8 @@ static void restores_dfplayer_backup_without_replacing_fixed_flags() {
   TEST_ASSERT_EQUAL(pins::activeProfile().defaults.battery, cfg.pinBattery);
   TEST_ASSERT_EQUAL(pins::activeProfile().defaults.i2cSda, cfg.pinI2cSda);
   TEST_ASSERT_EQUAL(pins::activeProfile().defaults.i2cScl, cfg.pinI2cScl);
-  // Polarity is not compared by fixed-wiring validation: preserve its prior behavior.
-  TEST_ASSERT_TRUE(cfg.ldrOnGround);
+  // The light sensor is soldered, so a restore keeps the board's own polarity (review item N5).
+  TEST_ASSERT_FALSE(cfg.ldrOnGround);
 }
 
 int main() {
