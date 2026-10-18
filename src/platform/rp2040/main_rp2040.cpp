@@ -88,10 +88,10 @@ class PicoSystem final : public ISystemService {
     sleepPending = true;
     rebootPending = true;
   }
-  // Never return to HTTP/MQTT/runtime callbacks after erasing the filesystem.
+  // Queued like a reboot; the loop formats on the way out (FactoryReset.h).
   void factoryReset() override {
-    picoFactoryReset([] { watchdog::stop(); }, [] { LittleFS.format(); },
-                     [] { rp2040.reboot(); });
+    format.request();
+    rebootPending = true;
   }
   void resetSettings() override {
     LittleFS.remove("/NVS/awtrix-ng.bin");
@@ -100,7 +100,7 @@ class PicoSystem final : public ISystemService {
   }
   // Runs once the power animation has played out; never returns.
   [[noreturn]] void restart(IBoard& board, Canvas& canvas) {
-    if (sleepPending) {
+    if (sleepPending && !format.pending()) {
       canvas.clear(0x000000u);
       board.show(canvas);
       delay(200);
@@ -115,6 +115,7 @@ class PicoSystem final : public ISystemService {
     rp2040.reboot();
     for (;;) {}
   }
+  PicoFactoryReset format;
   bool rebootPending = false;
   bool resetPending = false;
   bool sleepPending = false;
@@ -441,11 +442,15 @@ void loop() {
   });
   g_board->show(g_runtime->canvas());
   if (g_system.rebootPending && !g_runtime->powerBusy()) {
-    // A requested reboot or sleep keeps pending settings, unless a reset just removed them.
-    if (g_settingsDirty && g_storageReady && !g_system.resetPending)
-      nvs::saveSettings(g_runtime->engine().state().settings());
-    // Anything a script saved in its last seconds is written first, as on the ESP32.
-    g_scriptStore.flush();
+    g_system.format.beforeReboot(
+        [] {
+          // A requested reboot or sleep keeps pending settings, unless a reset just removed them.
+          if (g_settingsDirty && g_storageReady && !g_system.resetPending)
+            nvs::saveSettings(g_runtime->engine().state().settings());
+          // Anything a script saved in its last seconds is written first, as on the ESP32.
+          g_scriptStore.flush();
+        },
+        [] { watchdog::stop(); }, [] { LittleFS.format(); });
     g_system.restart(*g_board, g_runtime->canvas());
   }
   // An Art-Net sender sets its own frame rate, as on the ESP32.
