@@ -1,5 +1,6 @@
 #include "core/apps/SpecRenderer.h"
 
+#include "core/render/ContentBand.h"
 #include "core/render/DrawProgram.h"
 #include "core/render/Gfx2d.h"
 #include "core/render/ScrollText.h"
@@ -40,8 +41,9 @@ void renderDecorations(Canvas& c, const AppSpec& s, const GfxFont& font, uint32_
 }
 
 
-void renderText(Canvas& c, const AppSpec& s, const GfxFont& font, uint32_t color,
+void renderText(Canvas& panel, const AppSpec& s, const GfxFont& font, uint32_t color,
                 const SpecRender& r) {
+  Canvas c = contentBand(panel, r.textBand);
   if (s.text.empty()) return;
   const bool upper = upperFor(s.textCase, r.uppercase);
   const text::TextMetrics m = text::measure(font, s.text, upper);

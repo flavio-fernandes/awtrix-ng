@@ -231,3 +231,21 @@ already changed.
 - [Errors](errors.md) - every error code and what it means
 - [App & notification payload](payload.md)
 - [Scripting guide](../guides/scripting/index.md)
+
+## Tall displays: content band and full canvas
+
+<!-- only esp32 esp32-s3 -->
+On a display taller than 8 rows (`panelHeight` above 8, or `awtrix-linux --height` where no page
+zoom applies), body text, the primary 8×8 icon, the built-in apps and the AP-mode screen keep
+their eight-row layout in a vertically centred band that starts at row `floor((H - 8) / 2)`:
+rows 1–8 at 53×11, rows 4–11 at 32×16. At 32×8 nothing moves.
+<!-- /only -->
+<!-- only tc002 -->
+The TC002 enlarges pages to fill its 16-row display, so nothing is banded. `awtrix-linux --height`
+at a height where no page zoom applies keeps body text, the primary 8×8 icon and the built-in
+apps in a vertically centred eight-row band that starts at row `floor((H - 8) / 2)`.
+<!-- /only -->
+
+Backgrounds, effects, overlays, transitions and charts use the full canvas, rows `0 .. H-1`, and
+progress stays on row `H-1`. Draw commands, positioned icons and script drawing use absolute
+top-left coordinates with no band offset; scripts must query `width()` and `height()`.
