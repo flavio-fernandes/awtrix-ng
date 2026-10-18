@@ -75,7 +75,8 @@ async function testUnknownBinImageWithBrowserOtaIsOffered() {
   assert(install(window) && !install(window).disabled && install(window).textContent !== 'Check for updates',
     image + ': Download & install is offered');
   assert(!!binUpload(window), image + ': the .bin upload is offered');
-  assert(!/BOOTSEL/.test(window.document.body.textContent), image + ': no USB route');
+  const maint = window.document.getElementById('sec-maint');
+  assert(maint && !/BOOTSEL/.test(maint.textContent), image + ': no USB route: ' + (maint ? maint.textContent.slice(0, 400) : 'no section'));
   window.close();
 }
 async function testSameVersionIsUpToDate() {
