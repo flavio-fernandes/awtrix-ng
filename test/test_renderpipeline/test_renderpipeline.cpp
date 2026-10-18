@@ -10,6 +10,7 @@
 #include "core/CoreEngine.h"
 #include "core/Transitions.h"
 #include "core/apps/builtin/TimeApp.h"
+#include "core/render/ContentBand.h"
 #include "core/render/RenderPipeline.h"
 
 using namespace awtrix;
@@ -1767,6 +1768,42 @@ static void test_tall_builtin_app_draws_in_the_band() {
                               tallRig.canvas.getPixel(x, y));
 }
 
+static int firstLitRow(const Canvas& c) {
+  for (int y = 0; y < c.height(); ++y)
+    for (int x = 0; x < c.width(); ++x) {
+      const uint32_t p = c.getPixel(x, y);
+      if (((p >> 16) & 0xFF) > 100 || ((p >> 8) & 0xFF) > 100 || (p & 0xFF) > 100) return y;
+    }
+  return -1;
+}
+
+// awtrix-linux at heights 9-15: its PageZoom exists but cannot enlarge (height / 8 == 1), so the
+// built-in apps move into the band, the intended tall-panel layout. An active zoom keeps 1.2.2's rows.
+struct UnavailableZoom : FakeZoom {
+  UnavailableZoom() : FakeZoom(64, 12, false) {}
+  bool available() const override { return false; }
+};
+
+static void test_the_band_applies_where_no_page_zoom_is_active() {
+  UnavailableZoom idle;
+  FakeZoom active(32, 6, false);
+  Rig shortRig(64, 8), idleRig(64, 12, nullptr, &idle), activeRig(64, 12, nullptr, &active);
+  TimeApp shortTime, idleTime, activeTime;
+  shortRig.apps.add(&shortTime);
+  idleRig.apps.add(&idleTime);
+  activeRig.apps.add(&activeTime);
+  for (Rig* r : {&shortRig, &idleRig, &activeRig}) {
+    r->engine.execute(switchFast("Time"));
+    r->engine.tick(0);
+    r->pipe->renderFrame(r->canvas, 0);
+  }
+  const int shortRow = firstLitRow(shortRig.canvas);
+  TEST_ASSERT_EQUAL_INT(0, shortRow);
+  TEST_ASSERT_EQUAL_INT(2, render::contentBandTop(12));
+  TEST_ASSERT_EQUAL_INT(2, firstLitRow(idleRig.canvas));
+  TEST_ASSERT_EQUAL_INT(shortRow, firstLitRow(activeRig.canvas));
+}
+
 // Enlarges the stage onto the frame two to one, the way a 52x16 panel shows a 26x8 page.
 struct ScalingZoom : FakeZoom {
   ScalingZoom() : FakeZoom(26, 8) {}
@@ -1831,6 +1868,7 @@ int main(int, char**) {
   RUN_TEST(test_tall_text_and_icon_band);
   RUN_TEST(test_tall_scrolling_notification_band);
   RUN_TEST(test_tall_builtin_app_draws_in_the_band);
+  RUN_TEST(test_the_band_applies_where_no_page_zoom_is_active);
   RUN_TEST(test_icon_gap_sets_where_static_text_starts);
   RUN_TEST(test_scrolling_text_never_enters_a_wider_icon_gap);
   RUN_TEST(test_a_wide_icon_reserves_its_own_width_plus_the_gap);
