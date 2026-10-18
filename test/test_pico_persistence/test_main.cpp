@@ -235,6 +235,13 @@ void fixed_board_system_config() {
     err = {};
     return sysconfig::apply(cfg, api::JsonReader(json), applied, err, origin);
   };
+  TEST_ASSERT_FALSE(put(R"({"ldrOnGround":true})"));
+  TEST_ASSERT_EQUAL(400, err.status);
+  TEST_ASSERT_EQUAL_STRING("ldrOnGround", err.field.c_str());
+  TEST_ASSERT_FALSE(cfg.ldrOnGround);
+  TEST_ASSERT_TRUE(put(R"({"ldrOnGround":true,"hostname":"restored"})", sysconfig::Origin::Restore));
+  TEST_ASSERT_FALSE(cfg.ldrOnGround);
+  TEST_ASSERT_EQUAL_STRING("restored", cfg.hostname.c_str());
   TEST_ASSERT_FALSE(put(R"({"panelWidth":64})"));
   TEST_ASSERT_EQUAL(422, err.status); TEST_ASSERT_EQUAL_STRING("panelWidth", err.field.c_str());
   TEST_ASSERT_FALSE(put(R"({"panelHeight":14})"));
