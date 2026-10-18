@@ -25,9 +25,9 @@ snapshot, so the board can save its configuration again. A number wider than fou
 
 ## What differs from the ESP32
 
-- The panel (53 × 11) and every pin are fixed. `/api/v1/system` does not offer the panel or pin
-  fields, and a backup made on an ESP32 restores everything else: this board keeps its own pins
-  and panel.
+- The panel (53 × 11) and every pin are fixed. `/api/v1/system` returns the panel and pin
+  fields, but an edit to them is refused (the panel height may be 8 or 11). A backup made on an
+  ESP32 restores everything else: this board keeps its own pins and panel.
 - A requested reboot saves pending settings first. A factory reset or a settings reset removes the
   namespace files and reboots without saving over them.
 - Restored assets are staged next to their target and renamed once complete; every folder a
