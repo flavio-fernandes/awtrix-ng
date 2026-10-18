@@ -8,7 +8,7 @@ class MemoryDisk : public KvBackend {
   std::map<std::string, std::string> files;
   bool fail = false;
   int writes = 0;
-  std::vector<std::string> setAside;
+  std::vector<std::string> setAsideNames;
   Read read(const std::string& n, std::string& b) override {
     if (!files.count(n)) return Read::Missing;
     b = files[n]; return Read::Ok;
@@ -17,7 +17,7 @@ class MemoryDisk : public KvBackend {
     if (fail) return false;
     files[n] = b; ++writes; return true;
   }
-  void setAside(const std::string& n) override { setAside.push_back(n); }
+  void setAside(const std::string& n) override { setAsideNames.push_back(n); }
 };
 void setUp() {}
 void tearDown() {}
@@ -75,7 +75,7 @@ void corrupt_snapshots_are_rejected() {
   TEST_ASSERT_FALSE(p.begin("ns", true));
   disk.files["ns"] = std::string(KvPreferences::kMaxBytes + 1, 'x');
   TEST_ASSERT_FALSE(p.begin("ns", true));
-  TEST_ASSERT_TRUE(disk.setAside.empty());
+  TEST_ASSERT_TRUE(disk.setAsideNames.empty());
 }
 // A write starts a damaged namespace afresh instead of blocking every later save.
 void damaged_snapshots_are_replaced_on_write() {
@@ -87,10 +87,10 @@ void damaged_snapshots_are_replaced_on_write() {
                                   "AXKV\x7f" + disk.files["ns"].substr(5)};
   for (const auto& bad : versions) {
     disk.files["ns"] = bad;
-    disk.setAside.clear();
+    disk.setAsideNames.clear();
     TEST_ASSERT_TRUE(p.begin("ns", false));
-    TEST_ASSERT_EQUAL(1, disk.setAside.size());
-    TEST_ASSERT_EQUAL_STRING("ns", disk.setAside[0].c_str());
+    TEST_ASSERT_EQUAL(1, disk.setAsideNames.size());
+    TEST_ASSERT_EQUAL_STRING("ns", disk.setAsideNames[0].c_str());
     TEST_ASSERT_FALSE(p.isKey("key"));
     TEST_ASSERT_EQUAL(5, p.put("fresh", KvPreferences::String, "saved"));
     TEST_ASSERT_TRUE(p.end());
