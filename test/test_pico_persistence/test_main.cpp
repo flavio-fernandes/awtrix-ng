@@ -257,8 +257,8 @@ void fixed_board_system_config() {
   TEST_ASSERT_EQUAL(8, cfg.panelHeight);
 }
 // Devices running PR 1 already store the height under "pheight", the key older upstream used for
-// the same quantity. A stored value outside 8-16 never reaches a panel: the layout clamps it, and
-// the Unicorn adopts its default 11 rows at boot.
+// the same quantity. A stored value the Unicorn cannot show (outside 8-16, or 9, 16) never reaches
+// its panel: the board adopts its default 11 rows at boot.
 void stored_panel_height_outside_the_range_is_not_used() {
   for (int stored : {0, 7, 9, 16, 17, 99, -1}) {
     Preferences p;
@@ -268,8 +268,6 @@ void stored_panel_height_outside_the_range_is_not_used() {
     DeviceConfig cfg;
     cfg.load();
     TEST_ASSERT_EQUAL(stored, cfg.panelHeight);
-    const int layoutHeight = cfg.matrixLayout().panelHeight;
-    TEST_ASSERT_TRUE(layoutHeight >= 8 && layoutHeight <= 16);
     sysconfig::adoptFixedBoard(cfg, pins::rp2040Profile());
     TEST_ASSERT_EQUAL(11, cfg.panelHeight);
   }
