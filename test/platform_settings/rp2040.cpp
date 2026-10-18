@@ -41,8 +41,9 @@ static void interactive_edits_reject_pins_atomically() {
     sysconfig::ApplyError err;
     int n;
     TEST_ASSERT_FALSE(sysconfig::apply(cfg, api::JsonReader(body), n, err));
-    TEST_ASSERT_EQUAL(422, err.status);
-    TEST_ASSERT_EQUAL_STRING("validationFailed", err.code.c_str());
+    TEST_ASSERT_EQUAL_MESSAGE(400, err.status, body);
+    TEST_ASSERT_EQUAL_STRING("invalidPinConfig", err.code.c_str());
+    TEST_ASSERT_EQUAL_STRING("", err.field.c_str());
     TEST_ASSERT_TRUE(cfg.mqttHost.empty());
     TEST_ASSERT_EQUAL(0, cfg.pinBtnLeft);
     TEST_ASSERT_EQUAL(-1, cfg.pinMatrix);
