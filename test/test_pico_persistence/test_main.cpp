@@ -4,6 +4,8 @@
 
 #include "persistence/DeviceConfig.h"
 #include "persistence/Filesystem.h"
+#include "persistence/DocumentFile.h"
+#include "platform/rp2040/AssetDirectories.h"
 #include "persistence/RadioStore.h"
 #include "persistence/NvsSettings.h"
 #include "core/Settings.h"
@@ -363,8 +365,24 @@ void capabilities_report_pending_pico_height() {
   check(8, 8, false); // after reboot, the board and canvas use the saved height
 }
 
+void asset_write_recreates_pruned_parents() {
+  TEST_ASSERT_TRUE(fs::begin());
+  TEST_ASSERT_TRUE(document::write("/MELODIES/last.txt", "last:d=8,o=5,b=160:c6"));
+  TEST_ASSERT_TRUE(LittleFS.remove("/MELODIES/last.txt"));
+  TEST_ASSERT_TRUE(LittleFS.rmdir("/MELODIES"));
+  TEST_ASSERT_FALSE(LittleFS.exists("/MELODIES"));
+  TEST_ASSERT_TRUE(document::write("/MELODIES/probe.txt", "probe:d=8,o=5,b=160:c6"));
+  TEST_ASSERT_EQUAL_STRING("probe:d=8,o=5,b=160:c6", testFiles["/MELODIES/probe.txt"].c_str());
+  for (const char* path : {"/ICONS/sub/test.gif", "/PALETTES/sub/test.json",
+                           "/SCRIPTS/sub/source.js", "/SCRIPTS/sub/data.json"}) {
+    TEST_ASSERT_TRUE(document::write(path, "asset"));
+    TEST_ASSERT_EQUAL_STRING("asset", testFiles[path].c_str());
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(asset_write_recreates_pruned_parents);
   RUN_TEST(capabilities_report_pending_pico_height);
   RUN_TEST(saved_melody_is_found_by_bare_name);
   RUN_TEST(legacy_panel_height_is_ignored_and_removed);
