@@ -29,7 +29,10 @@ bool apply(DeviceConfig& cfg, api::JsonReader obj, int& applied, ApplyError& err
       // Restore only heights this fixed panel supports; all other panel/pin keys stay local.
       const std::string value(r.valueText());
       const bool validHeight = key == "panelHeight" && (value == "8" || value == "11");
-      if (validHeight || (key.compare(0, 3, "pin") != 0 && key.compare(0, 5, "panel") != 0))
+      // PinRules' fixed-wiring check also compares dfplayerEnabled. LDR polarity
+      // and battery calibration are not wiring invariants and remain restorable.
+      if (validHeight || (key.compare(0, 3, "pin") != 0 && key.compare(0, 5, "panel") != 0 &&
+                          key != "dfplayer"))
         w.key(key.c_str()).raw(value);
       if (!r.skipValue()) break;
     }
