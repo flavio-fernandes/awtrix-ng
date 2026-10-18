@@ -83,6 +83,34 @@ void a_join_in_progress_is_not_restarted_before_its_timeout() {
   TEST_ASSERT_FALSE(joinDue(5000, 0xFFFFF000u, true, 15000));  // millis() wrapped: 9096 ms elapsed
   TEST_ASSERT_TRUE(joinDue(12000, 0xFFFFF000u, true, 15000));  // 16096 ms elapsed
 }
+// A fake clock through NetworkService's 5 s checks: only the joins they issue count as retries.
+void retries_count_joins_not_checks() {
+  using awtrix::platform::pico::noteStationCheck;
+  awtrix::net::LinkStatus status;
+  uint32_t lastJoinMs = 0;
+  bool joinedBefore = true;  // the link dropped right after a join at t=0
+  int joins = 0;
+  for (uint32_t now = 5000; now <= 15000; now += 5000) {
+    if (noteStationCheck(status, now, lastJoinMs, joinedBefore, 15000)) {
+      ++joins;
+      lastJoinMs = now;
+    }
+    if (now == 5000) TEST_ASSERT_EQUAL_UINT32(10000, status.retryInMs);  // not the 5 s check interval
+    if (now == 10000) TEST_ASSERT_EQUAL_UINT32(5000, status.retryInMs);
+  }
+  // 15 s disconnected with a 15 s timeout: one join, one attempt (three checks used to count three).
+  TEST_ASSERT_EQUAL(1, joins);
+  TEST_ASSERT_EQUAL(1, status.attempts);
+  TEST_ASSERT_EQUAL_UINT32(15000, status.retryInMs);
+  // A minute down: a join at 15, 30, 45 and 60 s.
+  for (uint32_t now = 20000; now <= 60000; now += 5000)
+    if (noteStationCheck(status, now, lastJoinMs, joinedBefore, 15000)) lastJoinMs = now;
+  TEST_ASSERT_EQUAL(4, status.attempts);
+  // Never joined: the first check joins at once.
+  awtrix::net::LinkStatus fresh;
+  TEST_ASSERT_TRUE(noteStationCheck(fresh, 5000, 0, false, 15000));
+  TEST_ASSERT_EQUAL(1, fresh.attempts);
+}
 void ap_restarts_cleanly_after_a_paused_join() {
   using awtrix::platform::pico::startAp;
   Wifi w;
@@ -119,6 +147,7 @@ int main() {
   RUN_TEST(station_reconnect_uses_stored_credentials);
   RUN_TEST(join_never_pins_a_bssid_or_scans);
   RUN_TEST(a_join_in_progress_is_not_restarted_before_its_timeout);
+  RUN_TEST(retries_count_joins_not_checks);
   RUN_TEST(ap_restarts_cleanly_after_a_paused_join);
   RUN_TEST(unset_address_reads_as_zeros);
   RUN_TEST(default_ap_and_mdns_share_mac_suffix);

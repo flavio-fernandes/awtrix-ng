@@ -314,12 +314,12 @@ void NetworkService::tick(uint32_t nowMs) {
   if (!connected) {
     weakChecks_ = 0;
     // Only log when a new attempt starts; the raw CYW43 link state says why the link is down.
-    if (platform::pico::joinDue(nowMs, lastJoinMs, joinedBefore, joinTimeoutMs(*cfg_))) {
+    if (platform::pico::noteStationCheck(*status_, nowMs, lastJoinMs, joinedBefore,
+                                         joinTimeoutMs(*cfg_))) {
       logf("wifi: connection lost (status %d, cyw43 link %d), rejoining",
            static_cast<int>(WiFi.status()), cyw43_wifi_link_status(&cyw43_state, CYW43_ITF_STA));
       reconnectStation(*cfg_);
     }
-    net::noteWifiRetry(*status_, kCheckMs);
     return;
   }
   roamIfWeak(nowMs);
