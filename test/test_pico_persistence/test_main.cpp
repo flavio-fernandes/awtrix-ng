@@ -370,6 +370,8 @@ void capabilities_report_pending_pico_height() {
   TEST_ASSERT_TRUE(sysconfig::apply(cfg, api::JsonReader(R"({"panelHeight":8})"), applied, err));
   check(11, 8, true);
   check(8, 8, false); // after reboot, the board and canvas use the saved height
+  cfg.panelHeight = 20;
+  check(11, 11, false); // the same sanitized boot fallback as the board
 }
 
 void asset_write_recreates_pruned_parents() {
