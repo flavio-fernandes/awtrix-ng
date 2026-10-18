@@ -7,7 +7,11 @@
 #include <cstring>
 #include "persistence/KvPreferences.h"
 
-namespace awtrix::storage { KvBackend& littleFsKvBackend(); }
+namespace awtrix::storage {
+KvBackend& littleFsKvBackend();
+// Where a snapshot set aside as damaged is reported; nothing is logged until one is set.
+void setKvLog(void (*log)(const char* line));
+}
 
 class Preferences {
  public:

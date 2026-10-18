@@ -20,7 +20,8 @@ NVS, so the shared configuration code runs unchanged.
 Each namespace file is one snapshot: a header, the typed keys and a CRC-32. A namespace is
 committed by writing `<name>.bin.tmp`, reading it back, and renaming it over the old file, so a
 power cut leaves either the old or the new snapshot. A damaged or truncated snapshot is ignored
-and the defaults load. A number wider than four bytes is rejected, never truncated.
+and the defaults load. The next save keeps it as `<name>.bin.bad`, logs one line and writes a fresh
+snapshot, so the board can save its configuration again. A number wider than four bytes is rejected, never truncated.
 
 ## What differs from the ESP32
 

@@ -286,6 +286,7 @@ void setup() {
   logf("reset: %s", platform::resetReasonName());
   // Never wait for a USB host: the panel must boot with power alone.
   // Filesystem first: config, settings and palettes all come off it.
+  awtrix::storage::setKvLog([](const char* line) { logf("%s", line); });
   g_storageReady = awtrix::fs::begin();
   if (!g_storageReady) logf("storage: mount failed; persistence unavailable");
   g_cfg = galacticUnicornDefaults();

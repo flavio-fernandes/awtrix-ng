@@ -98,6 +98,30 @@ void config_and_settings_reboot_roundtrip() {
   TEST_ASSERT_TRUE(defaults.wifiSsid.empty());
 }
 
+// A damaged snapshot loads the defaults, and the next save replaces it instead of failing.
+void damaged_config_is_saved_afresh() {
+  static int lines = 0;
+  lines = 0;
+  storage::setKvLog([](const char*) { ++lines; });
+  testFiles["/NVS/awtrix-cfg.bin"] = "garbage, not a snapshot";
+  DeviceConfig cfg;
+  cfg.load();
+  TEST_ASSERT_TRUE(cfg.wifiSsid.empty());
+  cfg.wifiSsid = "after-damage";
+  cfg.mqttPort = 1999;
+  TEST_ASSERT_TRUE(cfg.save());
+  TEST_ASSERT_FALSE(cfg.persistencePending);
+  TEST_ASSERT_EQUAL_STRING("garbage, not a snapshot", testFiles["/NVS/awtrix-cfg.bin.bad"].c_str());
+  TEST_ASSERT_EQUAL(1, lines);
+  DeviceConfig loaded;
+  loaded.load();
+  TEST_ASSERT_EQUAL_STRING("after-damage", loaded.wifiSsid.c_str());
+  TEST_ASSERT_EQUAL(1999, loaded.mqttPort);
+  TEST_ASSERT_TRUE(loaded.save());
+  TEST_ASSERT_EQUAL(1, lines);
+  storage::setKvLog(nullptr);
+}
+
 void failed_writes_keep_last_config() {
   DeviceConfig cfg;
   cfg.wifiSsid = "old";
@@ -269,5 +293,6 @@ int main() {
   RUN_TEST(esp32_backup_keeps_the_pico_wiring);
   RUN_TEST(fixed_board_system_config);
   RUN_TEST(fixed_board_adopted_at_boot);
+  RUN_TEST(damaged_config_is_saved_afresh);
   return UNITY_END();
 }

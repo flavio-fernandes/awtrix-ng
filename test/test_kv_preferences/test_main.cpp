@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <vector>
 #include "persistence/KvPreferences.h"
 using namespace awtrix::storage;
 
@@ -7,6 +8,7 @@ class MemoryDisk : public KvBackend {
   std::map<std::string, std::string> files;
   bool fail = false;
   int writes = 0;
+  std::vector<std::string> setAside;
   Read read(const std::string& n, std::string& b) override {
     if (!files.count(n)) return Read::Missing;
     b = files[n]; return Read::Ok;
@@ -15,6 +17,7 @@ class MemoryDisk : public KvBackend {
     if (fail) return false;
     files[n] = b; ++writes; return true;
   }
+  void setAside(const std::string& n) override { setAside.push_back(n); }
 };
 void setUp() {}
 void tearDown() {}
@@ -59,18 +62,50 @@ void corrupt_snapshots_are_rejected() {
   p.begin("ns"); p.put("key", KvPreferences::String, "value"); p.end();
   const auto valid = disk.files["ns"];
   // Every truncation and every single-byte mutation, including type and checksum.
+  // A read-only open (every load) refuses them, so the defaults apply.
   for (std::size_t n = 0; n < valid.size(); ++n) {
     disk.files["ns"] = valid.substr(0, n);
-    TEST_ASSERT_FALSE(p.begin("ns"));
+    TEST_ASSERT_FALSE(p.begin("ns", true));
     TEST_ASSERT_FALSE(p.isKey("key"));
     disk.files["ns"] = valid;
     disk.files["ns"][n] ^= 1;
-    TEST_ASSERT_FALSE(p.begin("ns"));
+    TEST_ASSERT_FALSE(p.begin("ns", true));
   }
   disk.files["ns"] = valid + "trailing";
-  TEST_ASSERT_FALSE(p.begin("ns"));
+  TEST_ASSERT_FALSE(p.begin("ns", true));
   disk.files["ns"] = std::string(KvPreferences::kMaxBytes + 1, 'x');
-  TEST_ASSERT_FALSE(p.begin("ns"));
+  TEST_ASSERT_FALSE(p.begin("ns", true));
+  TEST_ASSERT_TRUE(disk.setAside.empty());
+}
+// A write starts a damaged namespace afresh instead of blocking every later save.
+void damaged_snapshots_are_replaced_on_write() {
+  MemoryDisk disk; KvPreferences p(disk);
+  p.begin("ns"); p.put("key", KvPreferences::String, "value"); p.end();
+  auto damaged = disk.files["ns"];
+  damaged[damaged.size() / 2] ^= 1;
+  const std::string versions[] = {damaged, std::string(KvPreferences::kMaxBytes + 1, 'x'),
+                                  "AXKV\x7f" + disk.files["ns"].substr(5)};
+  for (const auto& bad : versions) {
+    disk.files["ns"] = bad;
+    disk.setAside.clear();
+    TEST_ASSERT_TRUE(p.begin("ns", false));
+    TEST_ASSERT_EQUAL(1, disk.setAside.size());
+    TEST_ASSERT_EQUAL_STRING("ns", disk.setAside[0].c_str());
+    TEST_ASSERT_FALSE(p.isKey("key"));
+    TEST_ASSERT_EQUAL(5, p.put("fresh", KvPreferences::String, "saved"));
+    TEST_ASSERT_TRUE(p.end());
+    KvPreferences reader(disk);
+    TEST_ASSERT_TRUE(reader.begin("ns", true));
+    TEST_ASSERT_EQUAL_STRING("saved", reader.get("fresh", KvPreferences::String).c_str());
+    TEST_ASSERT_FALSE(reader.isKey("key"));
+    reader.end();
+  }
+  // Even with nothing put, end() publishes an empty snapshot over the bad one.
+  disk.files["ns"] = damaged;
+  TEST_ASSERT_TRUE(p.begin("ns"));
+  TEST_ASSERT_TRUE(p.end());
+  TEST_ASSERT_TRUE(p.begin("ns", true));
+  p.end();
 }
 void atomic_failure_and_namespaces() {
   MemoryDisk disk; KvPreferences p(disk);
@@ -95,6 +130,7 @@ int main() {
   UNITY_BEGIN();
   RUN_TEST(roundtrip);
   RUN_TEST(corrupt_snapshots_are_rejected);
+  RUN_TEST(damaged_snapshots_are_replaced_on_write);
   RUN_TEST(atomic_failure_and_namespaces);
   return UNITY_END();
 }
