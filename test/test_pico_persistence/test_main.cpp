@@ -20,7 +20,7 @@
 // The production DeviceConfig, NvsSettings, LittleFS adapter and restore sink of the Pico, run
 // against the simulated filesystem in compat/.
 using namespace awtrix;
-void setUp() { testFiles.clear(); testDirs.clear(); failWrite = failRename = false; }
+void setUp() { testFiles.clear(); testDirs.clear(); failWrite = failRename = failOpen = shortRead = false; }
 void tearDown() {}
 
 void legacy_panel_height_is_ignored_and_removed() {
@@ -380,8 +380,37 @@ void asset_write_recreates_pruned_parents() {
   }
 }
 
+void read_errors_never_move_the_config() {
+  DeviceConfig cfg;
+  cfg.wifiSsid = "intact";
+  TEST_ASSERT_TRUE(cfg.save());
+  const auto original = testFiles["/NVS/awtrix-cfg.bin"];
+  for (bool shortFailure : {false, true}) {
+    failOpen = !shortFailure;
+    shortRead = shortFailure;
+    cfg.wifiSsid = "changed";
+    TEST_ASSERT_FALSE(cfg.save());
+    TEST_ASSERT_EQUAL_STRING(original.c_str(), testFiles["/NVS/awtrix-cfg.bin"].c_str());
+    TEST_ASSERT_FALSE(LittleFS.exists("/NVS/awtrix-cfg.bin.bad"));
+  }
+  for (const auto& damaged : {std::string("bad"), std::string(storage::KvPreferences::kMaxBytes + 1, 'x')}) {
+    testFiles["/NVS/awtrix-cfg.bin"] = damaged;
+    failWrite = true;
+    TEST_ASSERT_FALSE(cfg.save());
+    failWrite = false;
+    TEST_ASSERT_EQUAL_STRING(damaged.c_str(), testFiles["/NVS/awtrix-cfg.bin"].c_str());
+    failRename = true;
+    TEST_ASSERT_FALSE(cfg.save());
+    failRename = false;
+    TEST_ASSERT_EQUAL_STRING(damaged.c_str(), testFiles["/NVS/awtrix-cfg.bin"].c_str());
+    TEST_ASSERT_TRUE(cfg.save());
+    TEST_ASSERT_EQUAL_STRING(damaged.c_str(), testFiles["/NVS/awtrix-cfg.bin.bad"].c_str());
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(read_errors_never_move_the_config);
   RUN_TEST(asset_write_recreates_pruned_parents);
   RUN_TEST(capabilities_report_pending_pico_height);
   RUN_TEST(saved_melody_is_found_by_bare_name);

@@ -9,7 +9,7 @@
 #include <string>
 inline std::map<std::string, std::string> testFiles;
 inline std::set<std::string> testDirs;
-inline bool failWrite = false, failRename = false;
+inline bool failWrite = false, failRename = false, failOpen = false, shortRead = false;
 class File {
  public:
   File() = default;
@@ -29,6 +29,7 @@ class File {
     if (!open_) return 0;
     auto& value = testFiles[path_];
     n = std::min(n, value.size() - at_);
+    if (shortRead && n) { --n; shortRead = false; }
     if (n) std::memcpy(b, value.data() + at_, n);
     at_ += n; return n;
   }
@@ -61,6 +62,7 @@ class TestFS {
     return testDirs.erase(p);
   }
   File open(const char* p, const char* mode = "r") {
+    if (failOpen) { failOpen = false; return {}; }
     if (mode[0] == 'w' && !parentExists(p)) return {};
     return mode[0] == 'w' || exists(p) ? File(p, mode[0] == 'w') : File();
   }

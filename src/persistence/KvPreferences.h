@@ -12,12 +12,11 @@ namespace awtrix::storage {
 // write leaves the previous snapshot intact. No Arduino or filesystem types here.
 class KvBackend {
  public:
-  enum class Read { Missing, Ok, Error };
+  enum class Read { Missing, Ok, Error, Oversized };
   virtual ~KvBackend() = default;
   virtual Read read(const std::string& name, std::string& bytes) = 0;
-  virtual bool replace(const std::string& name, const std::string& bytes) = 0;
-  // Keeps a snapshot that failed to read for diagnosis, before a fresh one replaces it.
-  virtual void setAside(const std::string&) {}
+  // When damaged, preserve the old bytes for diagnosis without moving the live file.
+  virtual bool replace(const std::string& name, const std::string& bytes, bool damaged) = 0;
 };
 
 class KvPreferences {
@@ -37,16 +36,15 @@ class KvPreferences {
     values_.clear();
     std::string bytes;
     const auto result = backend_.read(name, bytes);
-    const bool damaged = result == KvBackend::Read::Error ||
+    if (result == KvBackend::Read::Error) return false;
+    const bool damaged = result == KvBackend::Read::Oversized ||
                          (result == KvBackend::Read::Ok && !decode(bytes));
     // A read-only open fails, so loads fall back to the defaults.
     if (readOnly && (damaged || result == KvBackend::Read::Missing)) return false;
     // A damaged, oversized or unknown-version snapshot would otherwise block every later save of
     // the namespace: a write starts from an empty map and end() commits a fresh snapshot.
-    if (damaged) {
-      values_.clear();
-      backend_.setAside(name);
-    }
+    if (damaged) values_.clear();
+    damaged_ = damaged;
     name_ = name;
     readOnly_ = readOnly;
     open_ = true;
@@ -63,8 +61,8 @@ class KvPreferences {
   // Publishes the snapshot and keeps the namespace open; a failure keeps the old file.
   bool commit() {
     if (!open_ || !dirty_) return true;
-    if (!backend_.replace(name_, encode())) return false;
-    dirty_ = false;
+    if (!backend_.replace(name_, encode(), damaged_)) return false;
+    dirty_ = damaged_ = false;
     return true;
   }
   bool isKey(const char* key) const { return open_ && key && values_.count(key); }
@@ -160,6 +158,6 @@ class KvPreferences {
   KvBackend& backend_;
   std::map<std::string, Value> values_;
   std::string name_;
-  bool open_ = false, readOnly_ = true, dirty_ = false;
+  bool open_ = false, readOnly_ = true, dirty_ = false, damaged_ = false;
 };
 }
