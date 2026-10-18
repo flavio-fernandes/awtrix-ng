@@ -9,6 +9,8 @@
 #include "core/Settings.h"
 #include "persistence/SystemConfigApply.h"
 #include "platform/rp2040/PicoRestoreSink.h"
+#include "platform/rp2040/AssetProbe.h"
+#include "core/sound/AudioRouter.h"
 #include "platform/rp2040/Rp2040Profile.h"
 
 // The production DeviceConfig, NvsSettings, LittleFS adapter and restore sink of the Pico, run
@@ -299,8 +301,45 @@ void fixed_board_adopted_at_boot() {
   TEST_ASSERT_EQUAL(16, esp.panelHeight);
 }
 
+void saved_melody_is_found_by_bare_name() {
+  pico::AssetProbe assets;
+  testFiles["/MELODIES/x.txt"] = "x:d=4,o=5,b=120:c";
+  testFiles["/MP3/x.mp3"] = "test mp3";
+  TEST_ASSERT_TRUE(assets.hasFile("/MELODIES/x.txt"));
+  TEST_ASSERT_FALSE(assets.hasFile("/MELODIES/missing.txt"));
+  TEST_ASSERT_TRUE(assets.hasFile("/MP3/x.mp3"));
+  TEST_ASSERT_FALSE(assets.hasFile("/MP3/missing.mp3"));
+  testFiles.erase("/MP3/x.mp3");
+  struct Tone : sound::IToneSink {
+    std::string asked;
+    void begin() override {}
+    void setVolumes(const sound::Volumes&) override {}
+    bool playRtttl(const std::string&, sound::Group) override { return false; }
+    bool playMelodyFile(const std::string& name, sound::Group) override {
+      asked = name;
+      return name == "x";
+    }
+    void stop() override {}
+    void tick() override {}
+    bool isPlaying() const override { return !asked.empty(); }
+  } tone;
+  sound::AudioRouter router;
+  router.setTone(&tone);
+  sound::Choices choices;
+  DispatchDetail detail;
+  TEST_ASSERT_TRUE(sound::parse(R"({"file":"x"})", sound::Origin::Play, choices, detail));
+  // Reproduce the missing-wiring failure, then attach the production Pico probe.
+  TEST_ASSERT_EQUAL(static_cast<int>(sound::PlayResult::NotFound),
+      static_cast<int>(router.play(choices, sound::Group::Alert, "", detail)));
+  router.setAssets(&assets);
+  TEST_ASSERT_EQUAL(static_cast<int>(sound::PlayResult::Ok),
+      static_cast<int>(router.play(choices, sound::Group::Alert, "", detail)));
+  TEST_ASSERT_EQUAL_STRING("x", tone.asked.c_str());
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(saved_melody_is_found_by_bare_name);
   RUN_TEST(legacy_panel_height_is_ignored_and_removed);
   RUN_TEST(panel_height_uses_fresh_key);
   RUN_TEST(config_and_settings_reboot_roundtrip);

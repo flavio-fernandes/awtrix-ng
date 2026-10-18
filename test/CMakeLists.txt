@@ -60,6 +60,8 @@ foreach(TEST_DIR IN LISTS TEST_DIRS)
     target_sources("${TEST_NAME}" PRIVATE
       "${AWTRIX_ROOT}/src/core/Settings.cpp"
       "${AWTRIX_ROOT}/src/core/sound/SoundMp3.cpp"
+      "${AWTRIX_ROOT}/src/core/sound/AudioRouter.cpp"
+      "${AWTRIX_ROOT}/src/core/sound/SoundSpec.cpp"
       "${AWTRIX_ROOT}/src/core/JsonColor.cpp"
       "${AWTRIX_ROOT}/src/core/WeekdayBarConfig.cpp"
       "${AWTRIX_ROOT}/src/core/payload/ScrollSpec.cpp"

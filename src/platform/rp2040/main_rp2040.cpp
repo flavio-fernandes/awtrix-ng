@@ -35,6 +35,7 @@
 #include "persistence/ScriptStore.h"
 #include "persistence/SystemConfigApply.h"
 #include "platform/BuildFeatures.h"
+#include "platform/rp2040/AssetProbe.h"
 #include "platform/rp2040/FactoryReset.h"
 #include "platform/rp2040/PaletteFiles.h"
 #include "platform/rp2040/PicoSleep.h"
@@ -304,6 +305,8 @@ void setup() {
   logbuf::setVerbose(g_cfg.debugMode);
   g_board = &activeBoard(g_cfg);
   static_cast<GalacticUnicornBoard*>(g_board)->setLog(boardLogLine);
+  static pico::AssetProbe assets;
+  g_audio.setAssets(&assets);
   g_audio.setTrack(g_board->trackSink());
   // Two independent decoders, as on ESP32, permit page transitions with icons.
   static DevicePageIcon pageIcon, pageIconB;
