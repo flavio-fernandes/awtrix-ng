@@ -159,7 +159,8 @@ void HttpApiServer::handleRestoreDone() {
       api::SingleUploadRequest::CompletionAuthorization::Start);
   if (result.status == 200 && restoreApplier_)
     result = api::restoreResponse(restoreApplier_->result(),
-                                 (cfg_ && cfg_->persistencePending) || persistence::documentsPending());
+                                 (cfg_ && cfg_->persistencePending) || persistence::documentsPending() ||
+                                     nvs::settingsPending());
   cleanupRestore();
   if (result.status == 401) sendUnauthorized();
   else sendResult(result);

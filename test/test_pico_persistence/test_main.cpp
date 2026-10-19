@@ -193,6 +193,16 @@ void restore_and_disabled_stores() {
   radiostore::save("[]");
   TEST_ASSERT_FALSE(radiostore::pending());
   TEST_ASSERT_FALSE(testFiles.count("/radio.json"));
+  // A settings entry is applied even when its save fails, and stays pending (a restore answers
+  // 507) until the device's own retry stores it.
+  failRename = true;
+  TEST_ASSERT_TRUE(sink.applySettings(R"({"brightness":55})", err));
+  failRename = false;
+  TEST_ASSERT_TRUE(nvs::settingsPending());
+  Settings retried;
+  retried.applyRead(api::JsonReader(R"({"brightness":55})"));
+  TEST_ASSERT_TRUE(nvs::saveSettings(retried));
+  TEST_ASSERT_FALSE(nvs::settingsPending());
 }
 
 void restore_creates_nested_asset_directories() {
