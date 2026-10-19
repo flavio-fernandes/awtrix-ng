@@ -17,7 +17,8 @@ class Preferences {
  public:
   Preferences() : store_(awtrix::storage::littleFsKvBackend()) {}
   bool begin(const char* name, bool readOnly = false) { return store_.begin(name, readOnly); }
-  void end();
+  // Unlike the ESP32 API, end() reports whether the namespace was committed.
+  bool end();
   bool clear() { return store_.clear(); }
   bool isKey(const char* key) const { return store_.isKey(key); }
   bool remove(const char* key) { return store_.remove(key); }

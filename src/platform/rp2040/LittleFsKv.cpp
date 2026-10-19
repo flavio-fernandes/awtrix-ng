@@ -75,4 +75,4 @@ KvBackend& littleFsKvBackend() { static Backend backend; return backend; }
 KvPreferences& nvsHandle() { static KvPreferences store(littleFsKvBackend()); return store; }
 }
 
-void Preferences::end() { store_.end(); }
+bool Preferences::end() { return store_.end(); }

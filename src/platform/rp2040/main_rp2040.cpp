@@ -38,6 +38,7 @@
 #include "platform/rp2040/AssetProbe.h"
 #include "platform/rp2040/DisplayProfile.h"
 #include "platform/rp2040/FactoryReset.h"
+#include "platform/rp2040/SaveRetry.h"
 #include "platform/rp2040/PaletteFiles.h"
 #include "platform/rp2040/PicoSleep.h"
 #include "platform/rp2040/RadioStartup.h"
@@ -425,10 +426,18 @@ void loop() {
   if (netConnected) g_disco.tick();
 #endif
   g_netWasConnected = netConnected;
+  // As on the ESP32 (src/main.cpp): a device config that was applied but could not be saved yet
+  // (persistencePending) is retried every 5 s, so it does not wait for the client to resend it.
+  static int64_t lastConfigRetryMs = 0;
+  if (g_cfg.persistencePending && g_storageReady && now - lastConfigRetryMs >= 5000) {
+    lastConfigRetryMs = now;
+    if (g_cfg.save()) logf("config: saved");
+  }
   // Collapses a burst of settings changes into one write; every write costs flash erase budget.
   if (g_settingsDirty && g_storageReady && !g_system.rebootPending && g_settingsSaver.due(now)) {
-    nvs::saveSettings(g_runtime->engine().state().settings());
-    g_settingsDirty = false;
+    // A failed commit (LittleFS full, a transient open or rename error) stays dirty and is retried
+    // after the saver's interval, instead of silently reverting at the next boot.
+    if (nvs::saveSettings(g_runtime->engine().state().settings())) g_settingsDirty = false;
     g_settingsSaver.saved(now);
   }
   g_runtime->tick(now, g_scripts);
@@ -448,9 +457,19 @@ void loop() {
   if (g_system.rebootPending && !g_runtime->powerBusy()) {
     g_system.format.beforeReboot(
         [] {
-          // A requested reboot or sleep keeps pending settings, unless a reset just removed them.
-          if (g_settingsDirty && g_storageReady && !g_system.resetPending)
-            nvs::saveSettings(g_runtime->engine().state().settings());
+          // A requested reboot or sleep keeps pending settings and device config, unless a reset
+          // just removed them. Each gets a few tries; if storage keeps failing the reboot still
+          // happens (the user asked for it) and the log says what was not saved.
+          if (g_storageReady && !g_system.resetPending) {
+            const auto pause = [] { delay(100); };
+            if (g_settingsDirty &&
+                saveWithRetries([] { return nvs::saveSettings(g_runtime->engine().state().settings()); },
+                                pause))
+              g_settingsDirty = false;
+            if (g_cfg.persistencePending && !saveWithRetries([] { return g_cfg.save(); }, pause))
+              logf("config: not saved before the restart (storage failing)");
+            if (g_settingsDirty) logf("settings: not saved before the restart (storage failing)");
+          }
           // Anything a script saved in its last seconds is written first, as on the ESP32.
           g_scriptStore.flush();
         },

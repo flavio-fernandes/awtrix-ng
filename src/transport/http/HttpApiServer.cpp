@@ -55,6 +55,7 @@
 #include "persistence/Filesystem.h"
 #include "persistence/FsRestoreSink.h"
 #include "persistence/IconOriginsStore.h"
+#include "persistence/NvsSettings.h"
 #include "persistence/SystemConfigApply.h"
 #include "persistence/SystemConfigApi.h"
 #if defined(AWTRIX_PLATFORM_RP2040)
