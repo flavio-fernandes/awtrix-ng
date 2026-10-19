@@ -117,6 +117,34 @@ void config_and_settings_reboot_roundtrip() {
 }
 
 // A damaged snapshot loads the defaults, and the next save replaces it instead of failing.
+// PR 1 stored every DeviceConfig bool with the Bool tag. An upgraded board keeps them, and the
+// next save rewrites them as the UChar the ESP32 Preferences use.
+void pr1_bools_survive_the_upgrade() {
+  {
+    storage::KvPreferences pr1(storage::littleFsKvBackend());
+    TEST_ASSERT_TRUE(pr1.begin("awtrix-cfg", false));
+    pr1.putNumber("menable", storage::KvPreferences::Bool, 1, 1);
+    pr1.putNumber("hadisc", storage::KvPreferences::Bool, 1, 1);
+    pr1.putNumber("scren", storage::KvPreferences::Bool, 0, 1);
+    pr1.put("ssid", storage::KvPreferences::String, "test-net");
+    TEST_ASSERT_TRUE(pr1.end());
+  }
+  DeviceConfig cfg;
+  cfg.load();
+  TEST_ASSERT_TRUE(cfg.mqttEnabled);
+  TEST_ASSERT_TRUE(cfg.haDiscovery);
+  TEST_ASSERT_FALSE(cfg.scriptingEnabled);
+  TEST_ASSERT_EQUAL_STRING("test-net", cfg.wifiSsid.c_str());
+  TEST_ASSERT_TRUE(cfg.save());
+  TEST_ASSERT_FALSE(cfg.persistencePending);
+  storage::KvPreferences after(storage::littleFsKvBackend());
+  TEST_ASSERT_TRUE(after.begin("awtrix-cfg", true));
+  TEST_ASSERT_EQUAL(1, after.getNumber("menable", storage::KvPreferences::UChar, 9));
+  TEST_ASSERT_EQUAL(9, after.getNumber("menable", storage::KvPreferences::Bool, 9));
+  TEST_ASSERT_EQUAL(0, after.getNumber("scren", storage::KvPreferences::UChar, 9));
+  after.end();
+}
+
 void damaged_config_is_saved_afresh() {
   static int lines = 0;
   lines = 0;
@@ -455,6 +483,7 @@ int main() {
   RUN_TEST(fixed_board_system_config);
   RUN_TEST(fixed_board_adopted_at_boot);
   RUN_TEST(stored_panel_height_outside_the_range_is_not_used);
+  RUN_TEST(pr1_bools_survive_the_upgrade);
   RUN_TEST(damaged_config_is_saved_afresh);
   return UNITY_END();
 }

@@ -78,7 +78,11 @@ class KvPreferences {
   std::string get(const char* key, Type type, const std::string& fallback = {}) const {
     if (!open_ || !key) return fallback;
     auto i = values_.find(key);
-    return i != values_.end() && i->second.first == type ? i->second.second : fallback;
+    if (i == values_.end()) return fallback;
+    // PR 1 Pico builds stored a bool as Bool; getBool now reads the ESP32's UChar. The next save
+    // rewrites the value as a UChar.
+    const Type stored = i->second.first;
+    return stored == type || (type == UChar && stored == Bool) ? i->second.second : fallback;
   }
   std::size_t put(const char* key, Type type, const std::string& bytes) {
     if (!open_ || readOnly_ || !key || !validName(key) || !validValue(type, bytes)) return 0;

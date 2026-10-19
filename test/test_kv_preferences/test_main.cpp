@@ -47,7 +47,9 @@ void roundtrip() {
   TEST_ASSERT_EQUAL_UINT32(uint32_t(-123), rebooted.getNumber("signed", KvPreferences::Int, 0));
   TEST_ASSERT_EQUAL_UINT32(0xffffffffu, rebooted.getNumber("uint", KvPreferences::UInt, 0));
   TEST_ASSERT_EQUAL(1, rebooted.getNumber("bool", KvPreferences::Bool, 0));
+  TEST_ASSERT_EQUAL(1, rebooted.getNumber("bool", KvPreferences::UChar, 0));
   TEST_ASSERT_EQUAL(255, rebooted.getNumber("uchar", KvPreferences::UChar, 0));
+  TEST_ASSERT_EQUAL(7, rebooted.getNumber("uchar", KvPreferences::Bool, 7));
   TEST_ASSERT_EQUAL(65535, rebooted.getNumber("ushort", KvPreferences::UShort, 0));
   TEST_ASSERT_EQUAL_HEX32(0xc1100000u, rebooted.getNumber("float", KvPreferences::Float, 0));
   TEST_ASSERT_TRUE(rebooted.isKey("empty"));
