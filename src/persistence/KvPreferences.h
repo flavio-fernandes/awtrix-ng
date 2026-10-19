@@ -16,6 +16,8 @@ class KvBackend {
   virtual ~KvBackend() = default;
   virtual Read read(const std::string& name, std::string& bytes) = 0;
   virtual bool replace(const std::string& name, const std::string& bytes) = 0;
+  // Keeps a snapshot that failed to read for diagnosis, before a fresh one replaces it.
+  virtual void setAside(const std::string&) {}
 };
 
 class KvPreferences {
@@ -35,13 +37,20 @@ class KvPreferences {
     values_.clear();
     std::string bytes;
     const auto result = backend_.read(name, bytes);
-    if (result == KvBackend::Read::Error ||
-        (result == KvBackend::Read::Ok && !decode(bytes)) ||
-        (result == KvBackend::Read::Missing && readOnly)) return false;
+    const bool damaged = result == KvBackend::Read::Error ||
+                         (result == KvBackend::Read::Ok && !decode(bytes));
+    // A read-only open fails, so loads fall back to the defaults.
+    if (readOnly && (damaged || result == KvBackend::Read::Missing)) return false;
+    // A damaged, oversized or unknown-version snapshot would otherwise block every later save of
+    // the namespace: a write starts from an empty map and end() commits a fresh snapshot.
+    if (damaged) {
+      values_.clear();
+      backend_.setAside(name);
+    }
     name_ = name;
     readOnly_ = readOnly;
     open_ = true;
-    dirty_ = false;
+    dirty_ = damaged;
     return true;
   }
   // Explicit namespace transaction: all DeviceConfig fields land together at end().

@@ -98,13 +98,14 @@ bool apply(DeviceConfig& cfg, api::JsonReader obj, int& applied, ApplyError& err
   }
 #endif
   std::string pinErr;
+  // The Unicorn's soldered pins are checked like configurable ones, so a pin edit gets the same
+  // 400 as on the ESP32 (and PR 1); the panel checks above keep their 422.
 #if defined(AWTRIX_PLATFORM_RP2040)
-  if (!merged.validatePins(pinErr)) {
-    err = {422, "validationFailed", pinErr, "pinMatrix"};
-    return false;
-  }
+  constexpr bool checkPins = true;
+#else
+  const bool checkPins = merged.gpioConfigurable;
 #endif
-  if (merged.gpioConfigurable && !merged.validatePins(pinErr)) {
+  if (checkPins && !merged.validatePins(pinErr)) {
     err = {400, "invalidPinConfig", pinErr, ""};
     return false;
   }

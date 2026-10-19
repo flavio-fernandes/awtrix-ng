@@ -98,6 +98,30 @@ void config_and_settings_reboot_roundtrip() {
   TEST_ASSERT_TRUE(defaults.wifiSsid.empty());
 }
 
+// A damaged snapshot loads the defaults, and the next save replaces it instead of failing.
+void damaged_config_is_saved_afresh() {
+  static int lines = 0;
+  lines = 0;
+  storage::setKvLog([](const char*) { ++lines; });
+  testFiles["/NVS/awtrix-cfg.bin"] = "garbage, not a snapshot";
+  DeviceConfig cfg;
+  cfg.load();
+  TEST_ASSERT_TRUE(cfg.wifiSsid.empty());
+  cfg.wifiSsid = "after-damage";
+  cfg.mqttPort = 1999;
+  TEST_ASSERT_TRUE(cfg.save());
+  TEST_ASSERT_FALSE(cfg.persistencePending);
+  TEST_ASSERT_EQUAL_STRING("garbage, not a snapshot", testFiles["/NVS/awtrix-cfg.bin.bad"].c_str());
+  TEST_ASSERT_EQUAL(1, lines);
+  DeviceConfig loaded;
+  loaded.load();
+  TEST_ASSERT_EQUAL_STRING("after-damage", loaded.wifiSsid.c_str());
+  TEST_ASSERT_EQUAL(1999, loaded.mqttPort);
+  TEST_ASSERT_TRUE(loaded.save());
+  TEST_ASSERT_EQUAL(1, lines);
+  storage::setKvLog(nullptr);
+}
+
 void failed_writes_keep_last_config() {
   DeviceConfig cfg;
   cfg.wifiSsid = "old";
@@ -232,6 +256,23 @@ void fixed_board_system_config() {
   TEST_ASSERT_TRUE(put(R"({"panelHeight":8})", sysconfig::Origin::Restore));
   TEST_ASSERT_EQUAL(8, cfg.panelHeight);
 }
+// Devices running PR 1 already store the height under "pheight", the key older upstream used for
+// the same quantity. A stored value the Unicorn cannot show (outside 8-16, or 9, 16) never reaches
+// its panel: the board adopts its default 11 rows at boot.
+void stored_panel_height_outside_the_range_is_not_used() {
+  for (int stored : {0, 7, 9, 16, 17, 99, -1}) {
+    Preferences p;
+    TEST_ASSERT_TRUE(p.begin("awtrix-cfg", false));
+    p.putInt("pheight", stored);
+    p.end();
+    DeviceConfig cfg;
+    cfg.load();
+    TEST_ASSERT_EQUAL(stored, cfg.panelHeight);
+    sysconfig::adoptFixedBoard(cfg, pins::rp2040Profile());
+    TEST_ASSERT_EQUAL(11, cfg.panelHeight);
+  }
+}
+
 void fixed_board_adopted_at_boot() {
   const auto& soc = pins::rp2040Profile();
   // What an earlier build may have stored: another pin map (I2C on 4/5) and panel size.
@@ -269,5 +310,7 @@ int main() {
   RUN_TEST(esp32_backup_keeps_the_pico_wiring);
   RUN_TEST(fixed_board_system_config);
   RUN_TEST(fixed_board_adopted_at_boot);
+  RUN_TEST(stored_panel_height_outside_the_range_is_not_used);
+  RUN_TEST(damaged_config_is_saved_afresh);
   return UNITY_END();
 }

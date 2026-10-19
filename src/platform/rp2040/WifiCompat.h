@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 
+#include "core/net/WifiLink.h"
+
 // Template seam keeps arduino-pico's differing API contract host-testable.
 // No board includes: callers supply WiFi, IPAddress and the mode constants.
 
@@ -37,6 +39,19 @@ void configureStatic(Wifi& wifi, Address ip, Address gateway, Address subnet,
 // 32-bit like the Pico's millis(), so the subtraction survives its 49-day wrap.
 inline bool joinDue(uint32_t nowMs, uint32_t lastJoinMs, bool joinedBefore, uint32_t timeoutMs) {
   return !joinedBefore || nowMs - lastJoinMs >= timeoutMs;
+}
+
+// One periodic check while the station is down: true when a join is due. Only an issued join
+// counts as a retry (net::noteWifiRetry counts retries, not polls), and retryInMs is the time
+// left until the next join, not until the next check.
+inline bool noteStationCheck(net::LinkStatus& s, uint32_t nowMs, uint32_t lastJoinMs,
+                             bool joinedBefore, uint32_t timeoutMs) {
+  if (joinDue(nowMs, lastJoinMs, joinedBefore, timeoutMs)) {
+    net::noteWifiRetry(s, timeoutMs);
+    return true;
+  }
+  s.retryInMs = timeoutMs - (nowMs - lastJoinMs);
+  return false;
 }
 
 // arduino-pico joins through the CYW43 firmware, which picks the AP for the SSID. The Pico does not

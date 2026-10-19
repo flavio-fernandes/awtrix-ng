@@ -267,12 +267,14 @@ coordinates, and GIFs keep their own size.
 On a display taller than 8 rows (`panelHeight` above 8, or `awtrix-linux --height` where no page
 zoom applies), body text, the primary 8×8 icon, the built-in apps and the AP-mode screen keep
 their eight-row layout in a vertically centred band that starts at row `floor((H - 8) / 2)`:
-rows 1–8 at 53×11, rows 4–11 at 32×16. At 32×8 nothing moves.
+rows 1–8 at 53×11, rows 4–11 at 32×16. At 32×8 nothing moves. The band applies where no page zoom
+is active: `awtrix-linux` enlarges pages only from 16 rows, so at heights 9–15 it bands too.
 <!-- /only -->
 <!-- only tc002 -->
-The TC002 enlarges pages to fill its 16-row display, so nothing is banded. `awtrix-linux --height`
-at a height where no page zoom applies keeps body text, the primary 8×8 icon and the built-in
-apps in a vertically centred eight-row band that starts at row `floor((H - 8) / 2)`.
+The TC002 enlarges pages to fill its 16-row display, so nothing is banded: the band applies where
+no page zoom is active. `awtrix-linux --height` at a height where no page zoom applies (9–15)
+keeps body text, the primary 8×8 icon and the built-in apps in a vertically centred eight-row band
+that starts at row `floor((H - 8) / 2)`.
 <!-- /only -->
 
 Backgrounds, effects, overlays, transitions and charts use the full canvas, rows `0 .. H-1`, and

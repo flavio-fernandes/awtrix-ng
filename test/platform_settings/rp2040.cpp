@@ -33,16 +33,25 @@ static void panel_heights_and_capabilities() {
 }
 
 static void interactive_edits_reject_pins_atomically() {
-  for (const char* body : {R"({"pinMatrix":99})", R"({"pinBuzzer":5})",
-                          R"({"pinBtnLeft":-1,"mqttHost":"not-applied"})",
-                          R"({"pinLdr":35})", R"({"pinI2sBclk":12})",
-                          R"({"dfplayer":true,"mqttHost":"not-applied"})"}) {
+  struct Case { const char* body; int status; const char* code; const char* field; };
+  // A GPIO number outside the SoC's range fails the shared field rule, as on the ESP32; a valid
+  // number that changes the soldered wiring is PR 1's 400 invalidPinConfig.
+  const Case cases[] = {
+      {R"({"pinMatrix":99})", 422, "validationFailed", "pinMatrix"},
+      {R"({"pinLdr":35})", 422, "validationFailed", "pinLdr"},
+      {R"({"pinBuzzer":5})", 400, "invalidPinConfig", ""},
+      {R"({"pinBtnLeft":-1,"mqttHost":"not-applied"})", 400, "invalidPinConfig", ""},
+      {R"({"pinI2sBclk":12})", 400, "invalidPinConfig", ""},
+      {R"({"dfplayer":true,"mqttHost":"not-applied"})", 400, "invalidPinConfig", ""},
+  };
+  for (const auto& c : cases) {
     DeviceConfig cfg;
     sysconfig::ApplyError err;
     int n;
-    TEST_ASSERT_FALSE(sysconfig::apply(cfg, api::JsonReader(body), n, err));
-    TEST_ASSERT_EQUAL(422, err.status);
-    TEST_ASSERT_EQUAL_STRING("validationFailed", err.code.c_str());
+    TEST_ASSERT_FALSE(sysconfig::apply(cfg, api::JsonReader(c.body), n, err));
+    TEST_ASSERT_EQUAL_MESSAGE(c.status, err.status, c.body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(c.code, err.code.c_str(), c.body);
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(c.field, err.field.c_str(), c.body);
     TEST_ASSERT_TRUE(cfg.mqttHost.empty());
     TEST_ASSERT_EQUAL(0, cfg.pinBtnLeft);
     TEST_ASSERT_EQUAL(-1, cfg.pinMatrix);
