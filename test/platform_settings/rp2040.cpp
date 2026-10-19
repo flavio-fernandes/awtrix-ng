@@ -35,7 +35,8 @@ static void panel_heights_and_capabilities() {
 static void interactive_edits_reject_pins_atomically() {
   for (const char* body : {R"({"pinMatrix":99})", R"({"pinBuzzer":5})",
                           R"({"pinBtnLeft":-1,"mqttHost":"not-applied"})",
-                          R"({"pinLdr":35})", R"({"pinI2sBclk":12})"}) {
+                          R"({"pinLdr":35})", R"({"pinI2sBclk":12})",
+                          R"({"dfplayer":true,"mqttHost":"not-applied"})"}) {
     DeviceConfig cfg;
     sysconfig::ApplyError err;
     int n;
@@ -75,8 +76,27 @@ static void restores_an_esp32_backup_with_its_own_wiring() {
   std::string pinErr;
   TEST_ASSERT_TRUE(cfg.validatePins(pinErr));
 }
+static void restores_dfplayer_backup_without_replacing_fixed_flags() {
+  DeviceConfig cfg;
+  sysconfig::ApplyError err;
+  int n;
+  constexpr auto backup = R"({"dfplayer":true,"pinBattery":34,"pinI2cSda":21,"pinI2cScl":22,"ldrOnGround":true,"mqttEnabled":true,"mqttHost":"esp.broker","mqttPort":1884,"mqttPrefix":"restored"})";
+  TEST_ASSERT_TRUE(sysconfig::apply(cfg, api::JsonReader(backup), n, err, sysconfig::Origin::Restore));
+  TEST_ASSERT_FALSE(cfg.dfplayer);
+  TEST_ASSERT_TRUE(cfg.mqttEnabled);
+  TEST_ASSERT_EQUAL_STRING("esp.broker", cfg.mqttHost.c_str());
+  TEST_ASSERT_EQUAL_STRING("restored", cfg.mqttPrefix.c_str());
+  TEST_ASSERT_EQUAL(1884, cfg.mqttPort);
+  TEST_ASSERT_EQUAL(pins::activeProfile().defaults.battery, cfg.pinBattery);
+  TEST_ASSERT_EQUAL(pins::activeProfile().defaults.i2cSda, cfg.pinI2cSda);
+  TEST_ASSERT_EQUAL(pins::activeProfile().defaults.i2cScl, cfg.pinI2cScl);
+  // Polarity is not compared by fixed-wiring validation: preserve its prior behavior.
+  TEST_ASSERT_TRUE(cfg.ldrOnGround);
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(restores_dfplayer_backup_without_replacing_fixed_flags);
   RUN_TEST(panel_heights_and_capabilities);
   RUN_TEST(fixed_pin_profile);
   RUN_TEST(interactive_edits_reject_pins_atomically);

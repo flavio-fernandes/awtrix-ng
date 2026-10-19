@@ -188,8 +188,29 @@ static void test_capabilities_leave_out_a_wire_time_nobody_estimated() {
   TEST_ASSERT_FALSE(api::present(api::memberValue(display, "wireTimeIsEstimate")));
 }
 
+static void test_pending_height_and_default_json_compatibility() {
+  for (const char* id : {"esp32", "linux", "tc002", "rp2040"}) {
+    PlatformDescriptor platform{id, {32, 8, true}};
+    const auto before = api::capabilitiesJson({}, {}, {}, {}, &platform);
+    platform.display.requestedHeight = 8;
+    TEST_ASSERT_EQUAL_STRING(before.c_str(), api::capabilitiesJson({}, {}, {}, {}, &platform).c_str());
+    platform.display.requestedHeight = 16;
+    const auto json = api::capabilitiesJson({}, {}, {}, {}, &platform);
+    const auto display = api::memberValue(api::JsonReader(json), "display");
+    long long height = 0;
+    bool pending = false;
+    TEST_ASSERT_TRUE(api::memberValue(display, "height").asLong(height));
+    TEST_ASSERT_EQUAL(8, height);
+    TEST_ASSERT_TRUE(api::memberValue(display, "requestedHeight").asLong(height));
+    TEST_ASSERT_EQUAL(16, height);
+    TEST_ASSERT_TRUE(api::memberValue(display, "restartRequired").asBool(pending));
+    TEST_ASSERT_TRUE(pending);
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_pending_height_and_default_json_compatibility);
   RUN_TEST(test_logical_geometry_does_not_change_esp_wiring);
   RUN_TEST(test_native_canvas_and_screen_keep_every_physical_pixel);
   RUN_TEST(test_payload_coordinates_are_unscaled_on_native_display);

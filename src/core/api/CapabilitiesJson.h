@@ -66,8 +66,10 @@ inline std::string capabilitiesJson(const std::vector<std::string>& effects,
     writer.key("display").beginObject()
         .member("width", display.width).member("height", display.height)
         .member("configurable", display.configurable).member("requestedWidth", requestedWidth)
-        .member("requestedHeight", display.height)
-        .member("restartRequired", display.configurable && requestedWidth != display.width)
+        .member("requestedHeight", display.requestedHeight > 0 ? display.requestedHeight : display.height)
+        .member("restartRequired", display.configurable &&
+            (requestedWidth != display.width ||
+             (display.requestedHeight > 0 && display.requestedHeight != display.height)))
         .member("ready", display.ready).member("minWidth", limits.minWidth)
         .member("maxWidth", limits.maxWidth).member("minHeight", limits.minHeight)
         .member("maxHeight", limits.maxHeight).member("maxPixels", limits.maxPixels);

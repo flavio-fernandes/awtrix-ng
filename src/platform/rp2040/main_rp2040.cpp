@@ -35,6 +35,7 @@
 #include "persistence/ScriptStore.h"
 #include "persistence/SystemConfigApply.h"
 #include "platform/BuildFeatures.h"
+#include "platform/rp2040/FactoryReset.h"
 #include "platform/rp2040/PaletteFiles.h"
 #include "platform/rp2040/PicoSleep.h"
 #include "platform/rp2040/RadioStartup.h"
@@ -87,11 +88,10 @@ class PicoSystem final : public ISystemService {
     sleepPending = true;
     rebootPending = true;
   }
-  // A reset removes the namespace files and reboots without saving over them.
+  // Never return to HTTP/MQTT/runtime callbacks after erasing the filesystem.
   void factoryReset() override {
-    watchdog::stop();
-    LittleFS.remove("/NVS/awtrix-cfg.bin");
-    resetSettings();
+    picoFactoryReset([] { watchdog::stop(); }, [] { LittleFS.format(); },
+                     [] { rp2040.reboot(); });
   }
   void resetSettings() override {
     LittleFS.remove("/NVS/awtrix-ng.bin");
