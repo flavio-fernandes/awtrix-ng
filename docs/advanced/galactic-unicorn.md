@@ -10,11 +10,11 @@ the Pico fitted to your board:
 
 | Hardware | PlatformIO environment | USB image | Hardware status |
 | --- | --- | --- | --- |
-| Pico W, RP2040, 264 KB SRAM, 2 MB flash | `galactic_unicorn` | `firmware-galactic-unicorn.uf2` | build, CI and fit on 1.2.2; on the board only on PR 1 (1.2.1 base) |
+| Pico W, RP2040, 264 KB SRAM, 2 MB flash | `galactic_unicorn` | `firmware-galactic-unicorn.uf2` | verified on the board on 1.2.2 |
 | Pico 2 W, RP2350, 520 KB SRAM, 4 MB flash | `galactic_unicorn_2w` | `firmware-galactic-unicorn-2w.uf2` | verified on the board on 1.2.2 |
 
-The Pico 2 W image of this build was checked on a Galactic Unicorn; the Pico W image was only
-built, checked in CI and checked to fit. See [Verification scope](#verification-scope) for what
+Both images of this build were checked on a Galactic Unicorn: the Pico 2 W in full, the Pico W
+by an upgrade from PR 1 (1.2.1 base). See [Verification scope](#verification-scope) for what
 was checked and for the known limits.
 
 Both images reserve **512 KiB for LittleFS**, separate from the firmware. Neither Pico has
@@ -127,7 +127,9 @@ budget depends on the chip:
 | Largest script that installed (PR 1, 1.2.1 base) | about 7 KB of source | about 28 KB of source |
 
 The last two rows were measured on PR 1 (1.2.1 base); 1.2.2's script engine is larger, so read
-`freeHeapBytes` and `scriptHeapBudgetBytes` on your own board. On a Pico 2 W with this build,
+`freeHeapBytes` and `scriptHeapBudgetBytes` on your own board. On a Pico W with this build, the
+board logs `heap: 127 KB free with radio up` at boot, and a Tetris game script brings the free
+heap from 83312 to 73888 bytes. On a Pico 2 W with this build,
 `freeHeapBytes` / `largestFreeBlockBytes` read 351428 / 342280 bytes before the scripting guide's
 Hello script was installed, 351140 / 336960 with it running, and 347316 / 331184 with a script
 that animates three script icons, still at 42 fps. On the Pico 2 W a larger script
@@ -218,11 +220,19 @@ Verified on the board with this build (AWTRIX NG 1.2.2), **Pico 2 W**:
 - MQTT on a Home Assistant broker: discovery publishes one device with 25 entities, and a
   notification sent over MQTT is shown.
 
-The **Pico W** image of this build was built, checked in CI and checked to fit, but not tested on
-a board. PR 1 (1.2.1 base) verified the Pico W on the board: display, light sensor and frame rate,
-the HTTP smoke test with no failures, 80 requests at once, watchdog recovery, MQTT and Home
-Assistant discovery (21 entities), Matrix light control, notifications, A/B/C events, brightness,
-volume, Sleep, and hearing the `alert` melody.
+The **Pico W** image of this build was checked on a board in daily use, upgraded over USB from
+PR 1 (1.2.1 base):
+
+- against a backup taken before the upgrade, all 67 system settings and 36 of 37 display
+  settings were unchanged (the owner changed the other one afterwards), and Wi-Fi and the
+  stored script were kept;
+- Wi-Fi joined, MQTT connected and Home Assistant discovery published (firmware 1.2.2 shown);
+- the display refreshing, the light sensor read, and the web UI dashboard.
+
+The rest of the Pico W list comes from PR 1 (1.2.1 base), which verified on the board: display,
+light sensor and frame rate, the HTTP smoke test with no failures, 80 requests at once, watchdog
+recovery, MQTT and Home Assistant discovery (21 entities), Matrix light control, notifications,
+A/B/C events, brightness, volume, Sleep, and hearing the `alert` melody.
 
 The button webhook was tested only on the host.
 
