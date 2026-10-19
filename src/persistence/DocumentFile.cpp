@@ -1,10 +1,16 @@
 #include "persistence/DocumentFile.h"
 
 #include <LittleFS.h>
+#if defined(AWTRIX_PLATFORM_RP2040)
+#include "platform/rp2040/AssetDirectories.h"
+#endif
 
 namespace awtrix::document {
 
 bool write(const char* path, const std::string& bytes) {
+#if defined(AWTRIX_PLATFORM_RP2040)
+  if (!pico::ensureAssetParents(path)) return false;
+#endif
   constexpr const char* temporary = "/.document.tmp";
   File file = LittleFS.open(temporary, "w");
   if (!file) return false;

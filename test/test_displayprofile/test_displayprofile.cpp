@@ -208,8 +208,24 @@ static void test_pending_height_and_default_json_compatibility() {
   }
 }
 
+static void test_out_of_range_height_does_not_request_an_impossible_restart() {
+  for (int stored : {4, 20}) {
+    MatrixLayout layout;
+    layout.panelHeight = stored;
+    const int active = stored < 8 ? 8 : 16;
+    PlatformDescriptor platform{"esp32", {32, active, true}};
+    platform.display.requestedHeight = sanitizeMatrixLayout(layout).height();
+    const auto json = api::capabilitiesJson({}, {}, {}, {}, &platform);
+    const auto display = api::memberValue(api::JsonReader(json), "display");
+    bool pending = true;
+    TEST_ASSERT_TRUE(api::memberValue(display, "restartRequired").asBool(pending));
+    TEST_ASSERT_FALSE(pending);
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_out_of_range_height_does_not_request_an_impossible_restart);
   RUN_TEST(test_pending_height_and_default_json_compatibility);
   RUN_TEST(test_logical_geometry_does_not_change_esp_wiring);
   RUN_TEST(test_native_canvas_and_screen_keep_every_physical_pixel);

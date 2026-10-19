@@ -293,6 +293,7 @@ void LinuxRuntime::composeConnectivity() {
   platform_.emplace(PlatformDescriptor{target_->id, {o_.width, o_.height, cfg_.panelConfigurable},
                                        cfg_.gpioConfigurable});
   PlatformDescriptor& platform = *platform_;
+  platform.features.browserOta = static_cast<bool>(httpOptions_.updateUpload);
   platform.lightSensor = board().hasLightSensor();
   platform.display.limits = target_->displayLimits;
   platform.display.ready = board().displayReady() && app_->ready();

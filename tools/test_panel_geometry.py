@@ -39,7 +39,9 @@ def check(binary, webui, width, height):
             frame = app.screen()
             assert (frame["width"], frame["height"]) == (width, height), (frame["width"], frame["height"])
             assert len(frame["pixels"]) == width * height, len(frame["pixels"])
-            display = app.json("GET", "/api/v1/capabilities")["display"]
+            capabilities = app.json("GET", "/api/v1/capabilities")
+            assert capabilities["features"]["browserOta"] is False, capabilities
+            display = capabilities["display"]
             assert (display["width"], display["height"]) == (width, height), display
             assert display["configurable"] is False, display
             system = app.json("GET", "/api/v1/system")

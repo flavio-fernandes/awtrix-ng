@@ -4,17 +4,23 @@
 
 #include "persistence/DeviceConfig.h"
 #include "persistence/Filesystem.h"
+#include "persistence/DocumentFile.h"
+#include "platform/rp2040/AssetDirectories.h"
 #include "persistence/RadioStore.h"
 #include "persistence/NvsSettings.h"
 #include "core/Settings.h"
 #include "persistence/SystemConfigApply.h"
 #include "platform/rp2040/PicoRestoreSink.h"
+#include "platform/rp2040/AssetProbe.h"
+#include "core/sound/AudioRouter.h"
+#include "core/api/CapabilitiesJson.h"
+#include "platform/rp2040/DisplayProfile.h"
 #include "platform/rp2040/Rp2040Profile.h"
 
 // The production DeviceConfig, NvsSettings, LittleFS adapter and restore sink of the Pico, run
 // against the simulated filesystem in compat/.
 using namespace awtrix;
-void setUp() { testFiles.clear(); testDirs.clear(); failWrite = failRename = false; }
+void setUp() { testFiles.clear(); testDirs.clear(); failWrite = failRename = failOpen = shortRead = false; }
 void tearDown() {}
 
 void legacy_panel_height_is_ignored_and_removed() {
@@ -229,6 +235,13 @@ void fixed_board_system_config() {
     err = {};
     return sysconfig::apply(cfg, api::JsonReader(json), applied, err, origin);
   };
+  TEST_ASSERT_FALSE(put(R"({"ldrOnGround":true})"));
+  TEST_ASSERT_EQUAL(400, err.status);
+  TEST_ASSERT_EQUAL_STRING("ldrOnGround", err.field.c_str());
+  TEST_ASSERT_FALSE(cfg.ldrOnGround);
+  TEST_ASSERT_TRUE(put(R"({"ldrOnGround":true,"hostname":"restored"})", sysconfig::Origin::Restore));
+  TEST_ASSERT_FALSE(cfg.ldrOnGround);
+  TEST_ASSERT_EQUAL_STRING("restored", cfg.hostname.c_str());
   TEST_ASSERT_FALSE(put(R"({"panelWidth":64})"));
   TEST_ASSERT_EQUAL(422, err.status); TEST_ASSERT_EQUAL_STRING("panelWidth", err.field.c_str());
   TEST_ASSERT_FALSE(put(R"({"panelHeight":14})"));
@@ -299,8 +312,117 @@ void fixed_board_adopted_at_boot() {
   TEST_ASSERT_EQUAL(16, esp.panelHeight);
 }
 
+void saved_melody_is_found_by_bare_name() {
+  pico::AssetProbe assets;
+  testFiles["/MELODIES/x.txt"] = "x:d=4,o=5,b=120:c";
+  testFiles["/MP3/x.mp3"] = "test mp3";
+  TEST_ASSERT_TRUE(assets.hasFile("/MELODIES/x.txt"));
+  TEST_ASSERT_FALSE(assets.hasFile("/MELODIES/missing.txt"));
+  TEST_ASSERT_TRUE(assets.hasFile("/MP3/x.mp3"));
+  TEST_ASSERT_FALSE(assets.hasFile("/MP3/missing.mp3"));
+  testFiles.erase("/MP3/x.mp3");
+  struct Tone : sound::IToneSink {
+    std::string asked;
+    void begin() override {}
+    void setVolumes(const sound::Volumes&) override {}
+    bool playRtttl(const std::string&, sound::Group) override { return false; }
+    bool playMelodyFile(const std::string& name, sound::Group) override {
+      asked = name;
+      return name == "x";
+    }
+    void stop() override {}
+    void tick() override {}
+    bool isPlaying() const override { return !asked.empty(); }
+  } tone;
+  sound::AudioRouter router;
+  router.setTone(&tone);
+  sound::Choices choices;
+  DispatchDetail detail;
+  TEST_ASSERT_TRUE(sound::parse(R"({"file":"x"})", sound::Origin::Play, choices, detail));
+  // Reproduce the missing-wiring failure, then attach the production Pico probe.
+  TEST_ASSERT_EQUAL(static_cast<int>(sound::PlayResult::NotFound),
+      static_cast<int>(router.play(choices, sound::Group::Alert, "", detail)));
+  router.setAssets(&assets);
+  TEST_ASSERT_EQUAL(static_cast<int>(sound::PlayResult::Ok),
+      static_cast<int>(router.play(choices, sound::Group::Alert, "", detail)));
+  TEST_ASSERT_EQUAL_STRING("x", tone.asked.c_str());
+}
+
+void capabilities_report_pending_pico_height() {
+  DeviceConfig cfg;
+  cfg.panelHeight = 11;
+  auto check = [&](int active, int requested, bool restart) {
+    PlatformDescriptor platform{"rp2040", pico::displayProfile(53, active, cfg.panelHeight), false};
+    const auto json = api::capabilitiesJson({}, {}, {}, {}, &platform);
+    const auto display = api::memberValue(api::JsonReader(json), "display");
+    long long value = 0;
+    bool pending = false;
+    TEST_ASSERT_TRUE(api::memberValue(display, "height").asLong(value));
+    TEST_ASSERT_EQUAL(active, value);
+    TEST_ASSERT_TRUE(api::memberValue(display, "requestedHeight").asLong(value));
+    TEST_ASSERT_EQUAL(requested, value);
+    TEST_ASSERT_TRUE(api::memberValue(display, "restartRequired").asBool(pending));
+    TEST_ASSERT_EQUAL(restart, pending);
+  };
+  check(11, 11, false);
+  int applied = 0;
+  sysconfig::ApplyError err;
+  TEST_ASSERT_TRUE(sysconfig::apply(cfg, api::JsonReader(R"({"panelHeight":8})"), applied, err));
+  check(11, 8, true);
+  check(8, 8, false); // after reboot, the board and canvas use the saved height
+  cfg.panelHeight = 20;
+  check(11, 11, false); // the same sanitized boot fallback as the board
+}
+
+void asset_write_recreates_pruned_parents() {
+  TEST_ASSERT_TRUE(fs::begin());
+  TEST_ASSERT_TRUE(document::write("/MELODIES/last.txt", "last:d=8,o=5,b=160:c6"));
+  TEST_ASSERT_TRUE(LittleFS.remove("/MELODIES/last.txt"));
+  TEST_ASSERT_TRUE(LittleFS.rmdir("/MELODIES"));
+  TEST_ASSERT_FALSE(LittleFS.exists("/MELODIES"));
+  TEST_ASSERT_TRUE(document::write("/MELODIES/probe.txt", "probe:d=8,o=5,b=160:c6"));
+  TEST_ASSERT_EQUAL_STRING("probe:d=8,o=5,b=160:c6", testFiles["/MELODIES/probe.txt"].c_str());
+  for (const char* path : {"/ICONS/sub/test.gif", "/PALETTES/sub/test.json",
+                           "/SCRIPTS/sub/source.js", "/SCRIPTS/sub/data.json"}) {
+    TEST_ASSERT_TRUE(document::write(path, "asset"));
+    TEST_ASSERT_EQUAL_STRING("asset", testFiles[path].c_str());
+  }
+}
+
+void read_errors_never_move_the_config() {
+  DeviceConfig cfg;
+  cfg.wifiSsid = "intact";
+  TEST_ASSERT_TRUE(cfg.save());
+  const auto original = testFiles["/NVS/awtrix-cfg.bin"];
+  for (bool shortFailure : {false, true}) {
+    failOpen = !shortFailure;
+    shortRead = shortFailure;
+    cfg.wifiSsid = "changed";
+    TEST_ASSERT_FALSE(cfg.save());
+    TEST_ASSERT_EQUAL_STRING(original.c_str(), testFiles["/NVS/awtrix-cfg.bin"].c_str());
+    TEST_ASSERT_FALSE(LittleFS.exists("/NVS/awtrix-cfg.bin.bad"));
+  }
+  for (const auto& damaged : {std::string("bad"), std::string(storage::KvPreferences::kMaxBytes + 1, 'x')}) {
+    testFiles["/NVS/awtrix-cfg.bin"] = damaged;
+    failWrite = true;
+    TEST_ASSERT_FALSE(cfg.save());
+    failWrite = false;
+    TEST_ASSERT_EQUAL_STRING(damaged.c_str(), testFiles["/NVS/awtrix-cfg.bin"].c_str());
+    failRename = true;
+    TEST_ASSERT_FALSE(cfg.save());
+    failRename = false;
+    TEST_ASSERT_EQUAL_STRING(damaged.c_str(), testFiles["/NVS/awtrix-cfg.bin"].c_str());
+    TEST_ASSERT_TRUE(cfg.save());
+    TEST_ASSERT_EQUAL_STRING(damaged.c_str(), testFiles["/NVS/awtrix-cfg.bin.bad"].c_str());
+  }
+}
+
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(read_errors_never_move_the_config);
+  RUN_TEST(asset_write_recreates_pruned_parents);
+  RUN_TEST(capabilities_report_pending_pico_height);
+  RUN_TEST(saved_melody_is_found_by_bare_name);
   RUN_TEST(legacy_panel_height_is_ignored_and_removed);
   RUN_TEST(panel_height_uses_fresh_key);
   RUN_TEST(config_and_settings_reboot_roundtrip);

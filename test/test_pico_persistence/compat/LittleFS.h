@@ -9,7 +9,7 @@
 #include <string>
 inline std::map<std::string, std::string> testFiles;
 inline std::set<std::string> testDirs;
-inline bool failWrite = false, failRename = false;
+inline bool failWrite = false, failRename = false, failOpen = false, shortRead = false;
 class File {
  public:
   File() = default;
@@ -29,6 +29,7 @@ class File {
     if (!open_) return 0;
     auto& value = testFiles[path_];
     n = std::min(n, value.size() - at_);
+    if (shortRead && n) { --n; shortRead = false; }
     if (n) std::memcpy(b, value.data() + at_, n);
     at_ += n; return n;
   }
@@ -50,12 +51,24 @@ class TestFS {
   bool info(FSInfo& info) { for (const auto& f : testFiles) info.usedBytes += f.second.size(); return true; }
   bool exists(const char* p) { return testFiles.count(p) || testDirs.count(p); }
   bool mkdir(const char* p) { testDirs.insert(p); return true; }
+  bool parentExists(const std::string& path) {
+    const auto slash = path.rfind('/');
+    return slash == 0 || slash == std::string::npos || testDirs.count(path.substr(0, slash));
+  }
+  bool rmdir(const char* p) {
+    const std::string prefix = std::string(p) + '/';
+    for (const auto& f : testFiles) if (f.first.find(prefix) == 0) return false;
+    for (const auto& d : testDirs) if (d.find(prefix) == 0) return false;
+    return testDirs.erase(p);
+  }
   File open(const char* p, const char* mode = "r") {
+    if (failOpen) { failOpen = false; return {}; }
+    if (mode[0] == 'w' && !parentExists(p)) return {};
     return mode[0] == 'w' || exists(p) ? File(p, mode[0] == 'w') : File();
   }
   bool remove(const char* p) { return testFiles.erase(p); }
   bool rename(const char* from, const char* to) {
-    if (failRename || !testFiles.count(from)) return false;
+    if (failRename || !testFiles.count(from) || !parentExists(to)) return false;
     testFiles[to] = testFiles[from]; testFiles.erase(from); return true;
   }
 };

@@ -6,18 +6,20 @@ using namespace awtrix::storage;
 class MemoryDisk : public KvBackend {
  public:
   std::map<std::string, std::string> files;
-  bool fail = false;
+  bool fail = false, readError = false;
   int writes = 0;
   std::vector<std::string> setAsideNames;
   Read read(const std::string& n, std::string& b) override {
+    if (readError) { readError = false; return Read::Error; }
     if (!files.count(n)) return Read::Missing;
     b = files[n]; return Read::Ok;
   }
-  bool replace(const std::string& n, const std::string& b) override {
+  bool replace(const std::string& n, const std::string& b, bool damaged) override {
     if (fail) return false;
-    files[n] = b; ++writes; return true;
+    files[n] = b; ++writes;
+    if (damaged) setAsideNames.push_back(n);
+    return true;
   }
-  void setAside(const std::string& n) override { setAsideNames.push_back(n); }
 };
 void setUp() {}
 void tearDown() {}
@@ -89,11 +91,13 @@ void damaged_snapshots_are_replaced_on_write() {
     disk.files["ns"] = bad;
     disk.setAsideNames.clear();
     TEST_ASSERT_TRUE(p.begin("ns", false));
-    TEST_ASSERT_EQUAL(1, disk.setAsideNames.size());
-    TEST_ASSERT_EQUAL_STRING("ns", disk.setAsideNames[0].c_str());
+    TEST_ASSERT_TRUE(disk.setAsideNames.empty());
+    TEST_ASSERT_EQUAL_STRING(bad.c_str(), disk.files["ns"].c_str());
     TEST_ASSERT_FALSE(p.isKey("key"));
     TEST_ASSERT_EQUAL(5, p.put("fresh", KvPreferences::String, "saved"));
     TEST_ASSERT_TRUE(p.end());
+    TEST_ASSERT_EQUAL(1, disk.setAsideNames.size());
+    TEST_ASSERT_EQUAL_STRING("ns", disk.setAsideNames[0].c_str());
     KvPreferences reader(disk);
     TEST_ASSERT_TRUE(reader.begin("ns", true));
     TEST_ASSERT_EQUAL_STRING("saved", reader.get("fresh", KvPreferences::String).c_str());
@@ -126,8 +130,29 @@ void atomic_failure_and_namespaces() {
   p.begin("one", true); TEST_ASSERT_FALSE(p.isKey("key")); p.end();
   p.begin("two", true); TEST_ASSERT_EQUAL_STRING("other", p.get("key", KvPreferences::String).c_str()); p.end();
 }
+void transient_read_error_keeps_valid_snapshot() {
+  MemoryDisk disk; KvPreferences p(disk);
+  TEST_ASSERT_TRUE(p.begin("ns"));
+  p.put("key", KvPreferences::String, "valid");
+  TEST_ASSERT_TRUE(p.end());
+  const auto original = disk.files["ns"];
+  disk.readError = true;
+  disk.fail = true;
+  TEST_ASSERT_FALSE(p.begin("ns"));
+  TEST_ASSERT_TRUE(p.end());
+  TEST_ASSERT_TRUE(disk.files["ns"] == original);
+  TEST_ASSERT_TRUE(disk.setAsideNames.empty());
+  disk.fail = false;
+  disk.files["ns"] = "damage";
+  TEST_ASSERT_TRUE(p.begin("ns"));
+  disk.fail = true;
+  TEST_ASSERT_FALSE(p.end());
+  TEST_ASSERT_EQUAL_STRING("damage", disk.files["ns"].c_str());
+  TEST_ASSERT_TRUE(disk.setAsideNames.empty());
+}
 int main() {
   UNITY_BEGIN();
+  RUN_TEST(transient_read_error_keeps_valid_snapshot);
   RUN_TEST(roundtrip);
   RUN_TEST(corrupt_snapshots_are_rejected);
   RUN_TEST(damaged_snapshots_are_replaced_on_write);

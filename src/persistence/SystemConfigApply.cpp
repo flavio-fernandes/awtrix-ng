@@ -29,10 +29,9 @@ bool apply(DeviceConfig& cfg, api::JsonReader obj, int& applied, ApplyError& err
       // Restore only heights this fixed panel supports; all other panel/pin keys stay local.
       const std::string value(r.valueText());
       const bool validHeight = key == "panelHeight" && (value == "8" || value == "11");
-      // PinRules' fixed-wiring check also compares dfplayerEnabled. LDR polarity
-      // and battery calibration are not wiring invariants and remain restorable.
+      // The light sensor polarity is fixed by the soldered wiring, too.
       if (validHeight || (key.compare(0, 3, "pin") != 0 && key.compare(0, 5, "panel") != 0 &&
-                          key != "dfplayer"))
+                          key != "dfplayer" && key != "ldrOnGround"))
         w.key(key.c_str()).raw(value);
       if (!r.skipValue()) break;
     }
@@ -87,6 +86,10 @@ bool apply(DeviceConfig& cfg, api::JsonReader obj, int& applied, ApplyError& err
   if (!cfgrules::validateFixedPanel(pins::activeProfile(), merged.panelWidth, merged.panels,
                                    merged.panelHeight, cerr)) {
     err = {422, "validationFailed", cerr.message, cerr.field};
+    return false;
+  }
+  if (merged.ldrOnGround != cfg.ldrOnGround) {
+    err = {400, "invalidPinConfig", "light sensor wiring is fixed", "ldrOnGround"};
     return false;
   }
   if (merged.panelStart != cfg.panelStart || merged.panelWiring != cfg.panelWiring ||

@@ -35,6 +35,8 @@
 #include "persistence/ScriptStore.h"
 #include "persistence/SystemConfigApply.h"
 #include "platform/BuildFeatures.h"
+#include "platform/rp2040/AssetProbe.h"
+#include "platform/rp2040/DisplayProfile.h"
 #include "platform/rp2040/FactoryReset.h"
 #include "platform/rp2040/PaletteFiles.h"
 #include "platform/rp2040/PicoSleep.h"
@@ -122,9 +124,6 @@ class PicoSystem final : public ISystemService {
   bool sleepPending = false;
   uint64_t sleepMs = 0;
 };
-
-// Eight rows is the compatibility mode; 9 and 10 are rejected by ConfigRules.
-constexpr DisplayLimits kUnicornDisplayLimits{53, 53, 8, 11, 53 * 11};
 
 IBoard* g_board = nullptr;
 GalacticUnicornControls g_controls;
@@ -254,7 +253,8 @@ PlatformDescriptor platformDescriptor() {
   platform.microphonePcm = false;
   platform.features = buildcfg::buildFeatures();
   platform.fixedGpio = &pins::rp2040Profile();
-  platform.display.limits = kUnicornDisplayLimits;
+  platform.display = pico::displayProfile(g_board->matrixWidth(), g_board->matrixHeight(),
+                                          g_cfg.panelHeight);
   platform.display.ready = g_board->displayReady() && g_runtime->ready();
   return platform;
 }
@@ -304,6 +304,8 @@ void setup() {
   logbuf::setVerbose(g_cfg.debugMode);
   g_board = &activeBoard(g_cfg);
   static_cast<GalacticUnicornBoard*>(g_board)->setLog(boardLogLine);
+  static pico::AssetProbe assets;
+  g_audio.setAssets(&assets);
   g_audio.setTrack(g_board->trackSink());
   // Two independent decoders, as on ESP32, permit page transitions with icons.
   static DevicePageIcon pageIcon, pageIconB;

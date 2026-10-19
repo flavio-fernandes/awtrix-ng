@@ -1,6 +1,9 @@
 #include "persistence/ScriptFiles.h"
 
 #include <LittleFS.h>
+#if defined(AWTRIX_PLATFORM_RP2040)
+#include "platform/rp2040/AssetDirectories.h"
+#endif
 
 #include "persistence/Filesystem.h"
 #include "persistence/FsFreeSpace.h"
@@ -9,6 +12,9 @@
 namespace awtrix::scriptfiles {
 
 bool LittleFsFiles::write(const std::string& path, const std::string& body) {
+#if defined(AWTRIX_PLATFORM_RP2040)
+  if (!pico::ensureAssetParents(path)) return false;
+#endif
   File file = LittleFS.open(path.c_str(), "w");
   if (!file) { logf("scripts: cannot write %s", path.c_str()); return false; }
   const auto count = file.write(reinterpret_cast<const uint8_t*>(body.data()), body.size());
