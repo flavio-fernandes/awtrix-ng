@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include "platform/rp2040/FactoryReset.h"
+#include "platform/rp2040/SaveRetry.h"
 
 void setUp() {}
 void tearDown() {}
@@ -50,10 +51,23 @@ static void test_a_plain_reboot_saves_and_keeps_the_files() {
   TEST_ASSERT_EQUAL(before + 1, disk.files.size());
 }
 
+// The save before a reboot is retried a few times, and gives up rather than holding the reboot.
+static void test_a_failing_save_is_retried_then_given_up() {
+  int tries = 0, waits = 0;
+  TEST_ASSERT_TRUE(awtrix::saveWithRetries([&] { return ++tries == 2; }, [&] { ++waits; }));
+  TEST_ASSERT_EQUAL(2, tries);
+  TEST_ASSERT_EQUAL(1, waits);
+  tries = waits = 0;
+  TEST_ASSERT_FALSE(awtrix::saveWithRetries([&] { ++tries; return false; }, [&] { ++waits; }));
+  TEST_ASSERT_EQUAL(3, tries);
+  TEST_ASSERT_EQUAL(2, waits);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_request_queues_the_reset);
   RUN_TEST(test_the_restart_formats_without_saving);
   RUN_TEST(test_a_plain_reboot_saves_and_keeps_the_files);
+  RUN_TEST(test_a_failing_save_is_retried_then_given_up);
   return UNITY_END();
 }
