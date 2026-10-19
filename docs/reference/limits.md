@@ -210,13 +210,33 @@ already changed.
 | --- | --- | --- |
 <!-- only esp32 esp32-s3 -->
 | Panel width | [`panelWidth × panels`](system.md#panel-and-orientation), default `32 × 1`, total 32–128 | `422 validationFailed` |
-| Display height | 8, cannot be changed | - |
-| Total pixels | at most 1024 (128 × 8) | follows from width and height. Read the limits of your device in `capabilities.display` |
+| Display height | [`panelHeight`](system.md#panel-and-orientation), 8–16 pixels, default `8`; applies after a reboot | `422 validationFailed` on `panelHeight` |
+| Total pixels | at most 2048 (128 × 16) | follows from width and height. Read the limits of your device in `capabilities.display` |
 <!-- /only -->
 <!-- only tc002 -->
 | Display size | 52 × 16 = 832 pixels, cannot be changed | - |
 <!-- /only -->
+<!-- only rp2040 -->
+| Display size | 53 × 11, or 53 × 8 shown on rows 1–8 ([`panelHeight`](system.md#panel-and-orientation)); nothing else | `422 validationFailed` |
+<!-- /only -->
 | GIF size | the display's width and height | resize larger GIFs before uploading; every frame must fit |
+
+<!-- only rp2040 -->
+## Galactic Unicorn
+
+The [Pico W and Pico 2 W images](../advanced/galactic-unicorn.md) reserve **512 KiB of LittleFS**, on 2 MB and on 4 MB of
+flash alike. Scripts may use 48 KB of memory on the Pico W and 96 KB on the Pico 2 W; script
+`http.*` requests and Modbus reads return `false`. Melodies follow the ordinary melody limits;
+MP3, radio, outbound TLS and firmware updates from the browser are not part of these images.
+
+| Limit | Value | At the edge |
+| --- | --- | --- |
+| Hung or faulted firmware | hardware watchdog, about 8 s | restarts itself; `/api/v1/device` then reports `resetReason: "watchdog"` |
+| Client that stops sending or reading | 5 s | the connection is closed |
+| Request line and headers | 2 KB | `431`, and the connection is closed |
+| Body over 2 KB sent slower than about 180 bytes per second | - | can hold the board past the watchdog, which then restarts it |
+
+<!-- /only -->
 
 ## What is *not* limited
 
@@ -231,3 +251,32 @@ already changed.
 - [Errors](errors.md) - every error code and what it means
 - [App & notification payload](payload.md)
 - [Scripting guide](../guides/scripting/index.md)
+
+## Tall displays: content band and full canvas
+
+<!-- only rp2040 -->
+The Galactic Unicorn is 11 rows tall. Body text, the main 8×8 icon, the built-in apps and the
+AP-mode page keep their eight-row layout in a band on rows 1–8 (it starts at
+`floor((11 - 8) / 2)`). Backgrounds, effects, overlays, transitions and charts use all 11 rows;
+the progress bar is on the last row. Draw commands and icons placed at a position use absolute
+coordinates, and GIFs keep their own size.
+
+<!-- /only -->
+
+<!-- only esp32 esp32-s3 -->
+On a display taller than 8 rows (`panelHeight` above 8, or `awtrix-linux --height` where no page
+zoom applies), body text, the primary 8×8 icon, the built-in apps and the AP-mode screen keep
+their eight-row layout in a vertically centred band that starts at row `floor((H - 8) / 2)`:
+rows 1–8 at 53×11, rows 4–11 at 32×16. At 32×8 nothing moves. The band applies where no page zoom
+is active: `awtrix-linux` enlarges pages only from 16 rows, so at heights 9–15 it bands too.
+<!-- /only -->
+<!-- only tc002 -->
+The TC002 enlarges pages to fill its 16-row display, so nothing is banded: the band applies where
+no page zoom is active. `awtrix-linux --height` at a height where no page zoom applies (9–15)
+keeps body text, the primary 8×8 icon and the built-in apps in a vertically centred eight-row band
+that starts at row `floor((H - 8) / 2)`.
+<!-- /only -->
+
+Backgrounds, effects, overlays, transitions and charts use the full canvas, rows `0 .. H-1`, and
+progress stays on row `H-1`. Draw commands, positioned icons and script drawing use absolute
+top-left coordinates with no band offset; scripts must query `width()` and `height()`.

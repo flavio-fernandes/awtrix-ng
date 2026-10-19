@@ -48,7 +48,9 @@ own address, so you can bookmark it:
 | **System** | `#/system` | Wi-Fi, MQTT, time, hardware, updates, backup |
 | **Log** | `#/log` | Live device log |
 
-The web UI shows only what your device can do.<!-- only esp32 esp32-s3 --> For example, the **Audio** tab is missing on a
+The web UI shows only what your device can do. Without scripting support, it hides the **Scripts**
+tab and **Run scripts** setting. Opening the Scripts address shows **Not available on this board**
+instead. The Audio page names missing MP3 and radio outputs.<!-- only esp32 esp32-s3 --> For example, the **Audio** tab is missing on a
 device with neither a buzzer nor a speaker.<!-- /only -->
 
 ## Dashboard
@@ -523,6 +525,12 @@ or why it failed (for example *Wrong login* or *Host not found*).
 
 ### Panel
 
+<!-- only rp2040 -->
+The Galactic Unicorn's display is built in, so this section keeps the height (11, or 8 shown on
+rows 1–8) and the orientation, and shows the width without letting you change it.
+
+<!-- /only -->
+
 <!-- only tc002 -->
 The display is fixed at 52×16, so this section only shows the size.
 
@@ -550,6 +558,19 @@ All fields: [Panel and orientation](../reference/system.md#panel-and-orientation
 <!-- /only -->
 
 ### Brightness & sensors
+
+<!-- only rp2040 -->
+Minimum and maximum brightness, light sensor factor and gamma, and brightness smoothing for the
+board's light sensor.
+
+### GPIO
+
+On the Galactic Unicorn (`gpio.fixed` in the capabilities) this section lists the pins the board
+uses and the ones it reserves, with nothing to edit. The page also leaves out what the board
+cannot have: the DFPlayer switch, the battery and I²C sensor settings, **LDR on GND** and the
+deep-sleep wake warning.
+
+<!-- /only -->
 
 <!-- only esp32 esp32-s3 -->
 Minimum and maximum brightness, light sensor factor and gamma, **LDR on GND** and brightness

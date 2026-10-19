@@ -103,6 +103,7 @@ nav:
           - GPIO & boards: reference/gpio.md
       - Install AWTRIX NG: getting-started/flashing.md
       - Install AWTRIX NG: getting-started/tc002.md
+      - Galactic Unicorn: advanced/galactic-unicorn.md
       - Connect to Wi-Fi: getting-started/first-boot.md
       - Find your clock: getting-started/discovery.md
       - The web UI: getting-started/web-ui.md
@@ -195,6 +196,9 @@ nav:
           - HTTPS administration: developers/linux/security.md
           - ARM system build: developers/linux/system-build.md
           - Buildroot configuration: developers/linux/buildroot.md
+      - Galactic Unicorn:
+          - Display driver: advanced/galactic-unicorn-display.md
+          - Storage: advanced/pico-persistence.md
       - TC002:
           - Developer guide: developers/tc002/index.md
           - MCU updates: developers/tc002/mcu-update.md

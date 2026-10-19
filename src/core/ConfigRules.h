@@ -44,6 +44,7 @@ inline const NumRange* ranges(std::size_t& count) {
       {"minBrightness", 0, 255, true},
       {"maxBrightness", 0, 255, true},
       {"panelWidth", 1, kMatrixWidthMax, true},
+      {"panelHeight", kMatrixHeightMin, kMatrixHeightMax, true},
       {"panels", 1, kMatrixWidthMax, true},
       {"tempOffset", -20, 20, false},
       {"humOffset", -50, 50, false},
@@ -272,11 +273,27 @@ inline bool validateAuthGate(bool authEnabled, const std::string& authUser,
   return true;
 }
 
-// panelWidth x panels is the total width; the panels are always 8 high.
+// panelWidth x panels is the total width. panelHeight is range-checked on its own: every height
+// from 8 to 16 fits the pixel budget at every valid width.
 inline bool validateMatrixGeometry(int panelWidth, int panels, ConfigError& err) {
   if (espMatrixWidth(panelWidth, panels) == 0) {
     err = {"panelWidth", "width must be " + std::to_string(kEspDisplayLimits.minWidth) + ".." +
                              std::to_string(kEspDisplayLimits.maxWidth)};
+    return false;
+  }
+  return true;
+}
+
+// Built-in panels may allow discrete logical heights, not every height in their limits.
+inline bool validateFixedPanel(const pins::SocProfile& soc, int width, int panels,
+                               int height, ConfigError& err) {
+  if (!soc.fixedPanelWidth) return true;
+  if (width != soc.fixedPanelWidth || panels != 1) {
+    err = {panels != 1 ? "panels" : "panelWidth", "panel width is fixed"};
+    return false;
+  }
+  if (height != soc.fixedPanelHeights[0] && height != soc.fixedPanelHeights[1]) {
+    err = {"panelHeight", "must be 8 or 11"};
     return false;
   }
   return true;

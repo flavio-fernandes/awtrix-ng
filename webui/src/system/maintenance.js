@@ -44,10 +44,19 @@ function updAvailable(c){
   const run=S.stats&&S.stats.version;
   return c&&c.usable&&run&&verNewer(c.version,run)?c:null;
 }
+// capabilities.browserOta says whether this build installs through /update (TC002's .awup too);
+// boards without it, such as the Pico's UF2, update over USB. Until capabilities answer, the
+// known image names decide.
+const OTA_IMAGES=['firmware-awtrix-ng.bin','firmware-awtrix-ng-s3-octal.bin','firmware-awtrix-ng-s3-quad.bin','awtrix-ng-tc002.awup'];
+const browserUpdate=()=>{
+  const ota=S.caps&&S.caps.browserOta;
+  if(typeof ota==='boolean')return ota;
+  const img=S.stats&&S.stats.updateImage;return !img||OTA_IMAGES.includes(img);
+};
 async function downloadFirmware(release,onProgress){
   const image=S.stats&&S.stats.updateImage;
   const awup=image==='awtrix-ng-tc002.awup';
-  if(!awup&&!['firmware-awtrix-ng.bin','firmware-awtrix-ng-s3-octal.bin','firmware-awtrix-ng-s3-quad.bin'].includes(image))throw new Error(t('updnotready'));
+  if(!awup&&!/\.bin$/.test(image||''))throw new Error(t('updnotready'));
   const options={credentials:'omit',cache:'no-store',signal:AbortSignal.timeout(120000)};
   const response=await fetch(OTA_BASE+'index.json',options);
   if(!response.ok)throw new Error(t('updnotready'));
@@ -90,7 +99,10 @@ function updateRow(install){
       const img=S.stats&&S.stats.updateImage;
       if(avail){
         status.textContent=t('updnew').replace('{v}',avail.version)+(avail.published?' ('+avail.published+')':'');
-        if(img&&avail.assets[img]){available=avail;installBtn.disabled=false;}
+        if(img&&avail.assets[img]){
+          if(browserUpdate()){available=avail;installBtn.disabled=false;}
+          else status.textContent+=' – install its .uf2 over USB.';
+        }
         notes.hidden=!avail.notes;
         if(!notes.hidden)notes.href=avail.notes;
       }else{
@@ -165,7 +177,8 @@ function maintenanceSection(page){
   });
   page.section('maint',t('maint'),t('mainthelp'),[
     updateRow(installFirmware),
-    actionRow(awup?t('fwfile').replace('.bin','.awup'):t('fwfile'),null,[fwBtn,fwIn]),
+    browserUpdate()?actionRow(awup?t('fwfile').replace('.bin','.awup'):t('fwfile'),null,[fwBtn,fwIn])
+      :actionRow('Install firmware','This board updates over USB: hold BOOTSEL while plugging it in, then copy the .uf2 onto the drive that appears.',[]),
     fwStatus,fw.row,
     actionRow(t('reboot'),null,[rebootBtn]),
     actionRow(t('resetset'),t('resetsetH'),[resetBtn]),

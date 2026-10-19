@@ -34,6 +34,9 @@ struct DisplayProfile {
   uint32_t estimatedWireTimeUs = 0;
   int requestedWidth = 0;
   bool ready = true;
+  // Zero means the platform has no separately configured height. Append to keep
+  // existing aggregate initializers (including ready) source-compatible.
+  int requestedHeight = 0;
 
   constexpr bool valid() const { return width > 0 && height > 0; }
   constexpr std::size_t pixelCount() const {

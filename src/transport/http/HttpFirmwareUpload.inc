@@ -1,3 +1,4 @@
+#if AWTRIX_FEATURE_BROWSER_OTA
 void HttpApiServer::scanImageMarker(const uint8_t* buf, size_t len) {
   for (size_t i = 0; i < len; ++i) {
     const char c = static_cast<char>(buf[i]);
@@ -24,6 +25,8 @@ void HttpApiServer::scanImageMarker(const uint8_t* buf, size_t len) {
 }
 
 void HttpApiServer::handleUpdateUpload() {
+  watchdog::feed();
+  if constexpr (!buildcfg::buildFeatures().browserOta) return;
   HTTPUpload& up = server_->upload();
   if (up.status == UPLOAD_FILE_START) {
     if (!updateRequest_.start(multipartPolicy())) return;
@@ -102,6 +105,10 @@ void HttpApiServer::handleUpdateUpload() {
 }
 
 void HttpApiServer::handleUpdateDone() {
+  if constexpr (!buildcfg::buildFeatures().browserOta) {
+    sendResult(api::httpResponse({}, DispatchResult::Unavailable, {}));
+    return;
+  }
   addCorsHeaders("POST", server_->uri().c_str());
   // Authenticate this completed request even if no upload callback ran at all.
   const auto result = updateRequest_.complete(multipartPolicy(),
@@ -121,3 +128,12 @@ void HttpApiServer::handleUpdateDone() {
   sendJson(200, "{\"ok\":true}");
   engine_->execute(Command(CommandType::Reboot));
 }
+#else
+// A build without browser update (the Pico) takes a UF2 over USB instead. Every way of reaching
+// /update ends here, so it has one answer.
+void HttpApiServer::handleUpdateUpload() { watchdog::feed(); }
+void HttpApiServer::handleUpdateDone() {
+  addCorsHeaders("POST", "/update");
+  sendError(503, "unavailable", "browser update is unavailable; flash a UF2 over USB (BOOTSEL)");
+}
+#endif

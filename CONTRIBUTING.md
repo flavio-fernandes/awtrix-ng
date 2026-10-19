@@ -39,12 +39,14 @@ pip install -U platformio
 Node 22+ is needed for a firmware build (the web UI is minified through `npx`
 before it is embedded) and for the web UI tests.
 
-## ESP32 firmware and host tests
+## Firmware and host tests
 
 ```bash
 pio run  -e awtrix        # ESP32 firmware (stock pin defaults)
 pio run  -e awtrix_s3_octal     # ESP32-S3 firmware, octal PSRAM
 pio run  -e awtrix_s3_quad      # ESP32-S3 firmware, quad PSRAM
+pio run  -e galactic_unicorn    # Galactic Unicorn firmware, Pico W
+pio run  -e galactic_unicorn_2w # Galactic Unicorn firmware, Pico 2 W
 python scripts/test_native.py  # host unit tests for the portable core
 ```
 
@@ -63,12 +65,15 @@ python scripts/test_native.py          # host unit tests
 pio run -e awtrix                      # ESP32 firmware images
 pio run -e awtrix_s3_octal
 pio run -e awtrix_s3_quad
+pio run -e galactic_unicorn             # Galactic Unicorn UF2s (Pico W, Pico 2 W)
+pio run -e galactic_unicorn_2w
 python tools/check_docs_sync.py        # docs match the firmware's real fields
 python tools/check_berry_api.py        # editor's Berry API table is current
 python tools/gen_agent_skill.py --check
 python tools/check_prelude_solidified.py
 python tools/check_font_sync.py
 python tools/check_partitions.py
+python tools/test_partition_reservations.py
 python tools/docs/build_site.py       # documentation, one build per clock
 node --test "tools/flowconv/*.test.mjs"
 cd webui/test && npm ci && npm test
@@ -77,6 +82,33 @@ cd webui/test && npm ci && npm test
 CI also configures and builds the Linux targets, runs their CTest suite and
 checks service isolation. Use the commands in the
 [developer build guide](docs/developers/building.md) on a Linux host.
+
+### Local CI container
+
+To run the host tests, Linux contracts, web UI, documentation checks and three
+ESP32 builds without installing a toolchain, use the CI image:
+
+```bash
+podman build -f tools/container/Containerfile -t localhost/awtrix-build:ng122 .
+podman run --rm --cpus 4 --memory 12g -v "$PWD":/w:Z \
+    -v pio-home-ng122:/root/.platformio \
+    localhost/awtrix-build:ng122 tools/container/ci-local.sh all
+```
+
+The CPU limit leaves room for other builds on a shared host. The volume caches
+PlatformIO downloads. The image includes Node 24, Linux integration dependencies
+and the pinned documentation requirements. Rebuild it when requirements change.
+
+The runner validates every argument before starting and reports PASS/FAIL for
+all steps, continuing after failures. Run groups separately with `native`,
+`linux`, `webui`, `docs`, `mkdocs` (the per-clock site build), or `build ENV...`;
+`all` builds the three ESP32 environments and both Galactic Unicorn environments.
+The actual systemd service test is explicitly skipped in this container and
+remains a GitHub CI gate. Tag checks run only with a `refs/tags/v*` GITHUB_REF
+and matching GITHUB_REF_NAME. Release publishing and TC002 image/installer
+workflows are not part of this local runner. USB install image generation is
+optional: `python scripts/factory_image.py --env awtrix --all -o dist` (repeat
+for each S3 environment after building it).
 
 ### Documentation per clock
 

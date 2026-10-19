@@ -2,7 +2,11 @@ void HttpApiServer::resetMultipartRequest() {
   // Also runs for an empty POST: a prior request cannot donate its authorization or success.
   cleanupRestore();
   restoreRequest_.reset();
+#if AWTRIX_FEATURE_BROWSER_OTA
   updateRequest_.reset([] { Update.abort(); });
+#else
+  updateRequest_.reset([] {});
+#endif
   uploadWriteOk_ = false;
   uploadContentChecked_ = false;
   updateImageError_.clear();
@@ -54,6 +58,11 @@ api::HttpResult HttpApiServer::multipartPolicy() {
 }
 
 void HttpApiServer::handleFileUpload() {
+  watchdog::feed();
+  if constexpr (!buildcfg::buildFeatures().all()) {
+    if (api::featurePolicy(buildcfg::buildFeatures(), server_->uri().c_str()) ==
+        DispatchResult::Unavailable) return;
+  }
   HTTPUpload& upload = server_->upload();
   if (upload.status == UPLOAD_FILE_START) {
     const api::HttpResult policy = multipartPolicy();
@@ -76,6 +85,13 @@ void HttpApiServer::handleFileUpload() {
 }
 
 void HttpApiServer::handleFileUploadDone() {
+  if constexpr (!buildcfg::buildFeatures().all()) {
+    if (api::featurePolicy(buildcfg::buildFeatures(), server_->uri().c_str()) ==
+        DispatchResult::Unavailable) {
+      sendResult(api::httpResponse({}, DispatchResult::Unavailable, {}));
+      return;
+    }
+  }
   addCorsHeaders("POST", server_->uri().c_str());
   const auto policy = multipartPolicy();
   fileUpload_.authorize(policy);
@@ -104,14 +120,20 @@ void HttpApiServer::cleanupRestore() {
 
 // Feed the actual ZIP reader while the request streams; no complete backup is buffered.
 void HttpApiServer::handleRestoreUpload() {
+  watchdog::feed();
   HTTPUpload& upload = server_->upload();
   if (upload.status == UPLOAD_FILE_START) {
     if (!restoreRequest_.start(multipartPolicy())) {
       cleanupRestore();
       return;
     }
+#if defined(AWTRIX_PLATFORM_RP2040)
+    // M3b's sink: nested asset folders, and the board keeps its pins, panel and Wi-Fi.
+    restoreSink_.reset(new backup::PicoRestoreSink(*cfg_, &engine_->state(), onConfigChanged_));
+#else
     restoreSink_.reset(
         new LittleFsRestoreSink(*cfg_, &engine_->state(), onConfigChanged_, releaseFiles_));
+#endif
     restoreApplier_.reset(new backup::RestoreApplier(*restoreSink_));
     restoreReader_.reset(new backup::ZipReader(*restoreApplier_));
   } else if (upload.status == UPLOAD_FILE_WRITE) {
@@ -137,7 +159,8 @@ void HttpApiServer::handleRestoreDone() {
       api::SingleUploadRequest::CompletionAuthorization::Start);
   if (result.status == 200 && restoreApplier_)
     result = api::restoreResponse(restoreApplier_->result(),
-                                 (cfg_ && cfg_->persistencePending) || persistence::documentsPending());
+                                 (cfg_ && cfg_->persistencePending) || persistence::documentsPending() ||
+                                     nvs::settingsPending());
   cleanupRestore();
   if (result.status == 401) sendUnauthorized();
   else sendResult(result);

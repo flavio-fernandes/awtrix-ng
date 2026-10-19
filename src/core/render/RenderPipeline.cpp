@@ -7,6 +7,7 @@
 
 #include "core/CoreEngine.h"
 #include "core/apps/SpecRenderer.h"
+#include "core/render/ContentBand.h"
 #include "core/render/StatusPixels.h"
 #include "core/render/TransitionComposer.h"
 
@@ -232,7 +233,14 @@ void RenderPipeline::renderPage(Canvas& dst, const std::string& id, int64_t nowM
     r.iconGap = column - r.iconWidth;
     r.textClipLeft = column ? column + iconShift(spec, *slot) : 0;
     const FontEntry& font = fontFor(&spec);
-    r.baseline = pageBaseline(font, page.height());
+    // Without a page zoom, eight-row page text sits in the content band, on the same rows as the
+    // icon and the built-in apps. With one (TC002), and for fonts taller than the band, the line box
+    // stays centred on the canvas, as does a font whose baseline would fall below the band.
+    const bool band = (!d_.zoom || !d_.zoom->available()) &&
+                      font.ascent + font.descent <= render::kContentBandHeight &&
+                      pageBaseline(font) < render::kContentBandHeight;
+    r.textBand = band;
+    r.baseline = band ? pageBaseline(font) : pageBaseline(font, page.height());
     r.drawBaseline = pageBaseline(font);
     r.backgroundDrawn = fullScreen;
     r.nowMs = nowMs;
@@ -275,6 +283,7 @@ void RenderPipeline::renderPage(Canvas& dst, const std::string& id, int64_t nowM
     ctx.fonts = d_.fonts;
     d_.clock->fill(ctx, nowMs);
     ctx.shownSinceMs = slot == &slotB_ ? -1 : shownSinceMs_;
+    ctx.contentBand = !d_.zoom || !d_.zoom->available();
     app->render(dst, ctx);
     drawOverlay("", EffectSettings{});
   } else if (pushed) {

@@ -50,8 +50,12 @@ inline std::string capabilitiesJson(const std::vector<std::string>& effects,
     writer.member(DeviceCapabilities::kNames[i].data() + kAudioPrefix, caps.present[i]);
   }
   writer.member("clip", audio.clip).endObject();
-  writer.member("microphone", caps.has("microphone")).member("scriptUpdates", true).key("gpio");
-  if (platform && !platform->configurableGpio) writer.null();
+  const FeatureSet features = platform ? platform->features : FeatureSet{};
+  writer.member("microphone", caps.has("microphone")).member("scriptUpdates", features.scripting)
+      .member("scripting", features.scripting).member("browserOta", features.browserOta).key("gpio");
+  if (platform && !platform->configurableGpio && platform->fixedGpio)
+    writer.raw(pins::toJson(*platform->fixedGpio));
+  else if (platform && !platform->configurableGpio) writer.null();
   else writer.raw(pins::toJson(pins::activeProfile()));
   if (platform) {
     const auto& display = platform->display;
@@ -62,8 +66,10 @@ inline std::string capabilitiesJson(const std::vector<std::string>& effects,
     writer.key("display").beginObject()
         .member("width", display.width).member("height", display.height)
         .member("configurable", display.configurable).member("requestedWidth", requestedWidth)
-        .member("requestedHeight", display.height)
-        .member("restartRequired", display.configurable && requestedWidth != display.width)
+        .member("requestedHeight", display.requestedHeight > 0 ? display.requestedHeight : display.height)
+        .member("restartRequired", display.configurable &&
+            (requestedWidth != display.width ||
+             (display.requestedHeight > 0 && display.requestedHeight != display.height)))
         .member("ready", display.ready).member("minWidth", limits.minWidth)
         .member("maxWidth", limits.maxWidth).member("minHeight", limits.minHeight)
         .member("maxHeight", limits.maxHeight).member("maxPixels", limits.maxPixels);

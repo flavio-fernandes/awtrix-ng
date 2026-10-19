@@ -99,6 +99,10 @@ struct SocProfile {
   RangeList rtc;
   PinList matrix;
   PinSet defaults;
+  // The board's wiring is soldered: GPIO edits are refused, the defaults still validate.
+  bool fixedWiring = false;
+  int fixedPanelWidth = 0;
+  int fixedPanelHeights[2] = {0, 0};
 };
 
 namespace detail {
@@ -173,6 +177,10 @@ inline const SocProfile& esp32s3Profile() {
   return p;
 }
 
+#if defined(AWTRIX_PLATFORM_RP2040)
+// The Pico's fixed wiring, from src/platform/rp2040/.
+const SocProfile& activeProfile();
+#else
 inline const SocProfile& activeProfile() {
 #if defined(AWTRIX_SOC_ESP32S3)
   return esp32s3Profile();
@@ -180,6 +188,7 @@ inline const SocProfile& activeProfile() {
   return esp32Profile();
 #endif
 }
+#endif
 
 }
 }

@@ -52,7 +52,52 @@ foreach(TEST_DIR IN LISTS TEST_DIRS)
   endif()
   target_compile_options("${TEST_NAME}" PRIVATE -O2)
   target_compile_definitions("${TEST_NAME}" PRIVATE PIO_UNIT_TESTING UNIT_TEST)
-  target_link_libraries("${TEST_NAME}" PRIVATE awtrix_core unity)
+  # A test with Arduino and LittleFS fakes runs the Pico's own persistence code.
+  if(EXISTS "${TEST_DIR}/compat/LittleFS.h")
+    target_include_directories("${TEST_NAME}" BEFORE PRIVATE "${TEST_DIR}/compat"
+      "${AWTRIX_ROOT}/src/platform/rp2040/include")
+    target_compile_definitions("${TEST_NAME}" PRIVATE AWTRIX_PLATFORM_RP2040)
+    target_sources("${TEST_NAME}" PRIVATE
+      "${AWTRIX_ROOT}/src/core/Settings.cpp"
+      "${AWTRIX_ROOT}/src/core/sound/SoundMp3.cpp"
+      "${AWTRIX_ROOT}/src/core/sound/AudioRouter.cpp"
+      "${AWTRIX_ROOT}/src/core/sound/SoundSpec.cpp"
+      "${AWTRIX_ROOT}/src/core/sound/Rtttl.cpp"
+      "${AWTRIX_ROOT}/src/core/radio/IcyStream.cpp"
+      "${AWTRIX_ROOT}/src/core/JsonColor.cpp"
+      "${AWTRIX_ROOT}/src/core/WeekdayBarConfig.cpp"
+      "${AWTRIX_ROOT}/src/core/payload/ScrollSpec.cpp"
+      "${AWTRIX_ROOT}/src/core/render/Color.cpp"
+      "${AWTRIX_ROOT}/src/core/render/ColorGrade.cpp"
+      "${AWTRIX_ROOT}/src/core/apps/BuiltinAppConfig.cpp"
+      "${AWTRIX_ROOT}/src/core/icons/IconOrigins.cpp"
+      "${AWTRIX_ROOT}/src/platform/rp2040/LittleFsKv.cpp"
+      "${AWTRIX_ROOT}/src/platform/rp2040/FilesystemRp2040.cpp"
+      "${AWTRIX_ROOT}/src/platform/rp2040/DisabledStores.cpp"
+      "${AWTRIX_ROOT}/src/platform/rp2040/PicoRestoreSink.cpp"
+      "${AWTRIX_ROOT}/src/platform/rp2040/SocProfileRp2040.cpp"
+      "${AWTRIX_ROOT}/src/platform/rp2040/settings/Config.cpp"
+      "${AWTRIX_ROOT}/src/persistence/AppOrderStore.cpp"
+      "${AWTRIX_ROOT}/src/persistence/DeviceConfig.cpp"
+      "${AWTRIX_ROOT}/src/persistence/DeviceConfigJson.cpp"
+      "${AWTRIX_ROOT}/src/persistence/DocumentFile.cpp"
+      "${AWTRIX_ROOT}/src/persistence/FsRestoreSink.cpp"
+      "${AWTRIX_ROOT}/src/persistence/IconOriginsStore.cpp"
+      "${AWTRIX_ROOT}/src/persistence/NvsSettings.cpp"
+      "${AWTRIX_ROOT}/src/persistence/SystemConfigApply.cpp")
+    # No Linux-built core: Settings and every consumer use the Pico layout.
+    target_include_directories("${TEST_NAME}" PRIVATE "${AWTRIX_ROOT}/src")
+    # DeviceConfig's generated overload set includes types absent from the Pico fields.
+    target_compile_options("${TEST_NAME}" PRIVATE -ffunction-sections -fdata-sections -Wno-unused-function)
+    target_link_options("${TEST_NAME}" PRIVATE -Wl,--gc-sections)
+    target_link_libraries("${TEST_NAME}" PRIVATE awtrix_json unity awtrix_warnings)
+  elseif(EXISTS "${TEST_DIR}/compat")
+    # Only framework fakes (test_pico_udp): the test compiles its Pico sources itself.
+    target_include_directories("${TEST_NAME}" BEFORE PRIVATE "${TEST_DIR}/compat")
+    target_link_libraries("${TEST_NAME}" PRIVATE awtrix_core unity)
+  else()
+    target_link_libraries("${TEST_NAME}" PRIVATE awtrix_core unity)
+  endif()
   if(TEST_NAME STREQUAL "test_scripthost" OR TEST_NAME STREQUAL "test_scriptevents")
     target_link_libraries("${TEST_NAME}" PRIVATE awtrix_script_extensions)
   endif()
@@ -69,6 +114,9 @@ foreach(TEST_DIR IN LISTS TEST_DIRS)
     WORKING_DIRECTORY "${AWTRIX_ROOT}"
   )
 endforeach()
+
+# Board lines through the shared log ring (fork issue #9).
+target_sources(test_boardlog PRIVATE "${AWTRIX_ROOT}/src/system/Log.cpp")
 
 add_executable(test_font_compact
   test_font/test_font.cpp
@@ -111,6 +159,31 @@ if(WIN32)
   target_link_options(test_settings_esp32 PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 add_test(NAME test_settings_esp32 COMMAND test_settings_esp32)
+
+# The Galactic Unicorn's settings shim: fixed panel and GPIO (R23, R24).
+add_executable(test_settings_rp2040
+  platform_settings/rp2040.cpp
+  "${AWTRIX_ROOT}/src/platform/rp2040/settings/Config.cpp"
+  "${AWTRIX_ROOT}/src/platform/rp2040/SocProfileRp2040.cpp"
+  "${AWTRIX_ROOT}/src/core/render/ColorGrade.cpp"
+  "${AWTRIX_ROOT}/src/persistence/DeviceConfigJson.cpp"
+  "${AWTRIX_ROOT}/src/persistence/SystemConfigApply.cpp"
+  "${AWTRIX_ROOT}/src/core/mqtt/HaDiscovery.cpp"
+  "${AWTRIX_ROOT}/src/core/Settings.cpp"
+  "${AWTRIX_ROOT}/src/core/JsonColor.cpp"
+  "${AWTRIX_ROOT}/src/core/WeekdayBarConfig.cpp"
+  "${AWTRIX_ROOT}/src/core/payload/ScrollSpec.cpp"
+  "${AWTRIX_ROOT}/src/core/render/Color.cpp"
+  "${AWTRIX_ROOT}/src/core/apps/BuiltinAppConfig.cpp"
+)
+target_include_directories(test_settings_rp2040 PRIVATE
+  "${AWTRIX_ROOT}/src/platform/rp2040/include" "${AWTRIX_ROOT}/src")
+target_compile_definitions(test_settings_rp2040 PRIVATE AWTRIX_PLATFORM_RP2040)
+target_link_libraries(test_settings_rp2040 PRIVATE awtrix_json unity awtrix_warnings)
+if(WIN32)
+  target_link_options(test_settings_rp2040 PRIVATE -static-libstdc++ -static-libgcc)
+endif()
+add_test(NAME test_settings_rp2040 COMMAND test_settings_rp2040)
 
 add_test(NAME test_font_compact_tables
   COMMAND "${CMAKE_COMMAND}" "-DNM=${CMAKE_NM}" "-DBINARY=$<TARGET_FILE:test_font_compact>"

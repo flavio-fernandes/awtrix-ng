@@ -4,10 +4,12 @@
 
 #include "core/CoreEngine.h"
 #include "core/api/ApiRouter.h"
+#include "platform/BuildFeatures.h"
 #include "core/api/StateJson.h"
 #include "hal/IBoard.h"
 #include "system/Log.h"
 #include "system/MonotonicClock.h"
+#include "system/Watchdog.h"
 #include "transport/ScriptMqttBridge.h"
 
 namespace awtrix {
@@ -81,6 +83,7 @@ void MqttService::tick() {
 // Publishes in streaming form so the payload is never copied into the packet buffer; that keeps
 // state documents larger than the buffer's spare room from failing.
 bool MqttService::send(const std::string& topic, const std::string& payload, bool retained) {
+  watchdog::feed();
   PubSubClient* client = link_.client();
   if (!client->beginPublish(topic.c_str(), static_cast<unsigned int>(payload.size()), retained))
     return false;
@@ -145,7 +148,7 @@ void MqttService::handleMessage(char* topic, uint8_t* payload, unsigned int len)
   engine_->state().runtime().receivedMessages++;
   Command cmd;
   std::string result;
-  switch (api::routeMqtt(suffix, body, cmd, result)) {
+  switch (api::routeMqtt(suffix, body, cmd, result, buildcfg::buildFeatures())) {
     case api::RouteOutcome::Routed: {
       const DispatchResult r = engine_->execute(cmd);
       logdbg("mqtt cmd %s -> %d", suffix.c_str(), static_cast<int>(r));

@@ -46,7 +46,13 @@ struct DeviceConfig : PlatformConfig {
   float ldrFactor = 1.0f, ldrGamma = 2.2f;
   bool ldrOnGround = false;
   long brightnessSmoothing = 10000;
+#if defined(AWTRIX_PLATFORM_RP2040)
+  int panelWidth = 53;
+  int panelHeight = 11;
+#else
   int panelWidth = 32;
+  int panelHeight = kMatrixHeight;
+#endif
   int panels = 1;
   mutable bool persistencePending = false;
   PanelStart panelStart = PanelStart::TopLeft;
@@ -97,6 +103,7 @@ struct DeviceConfig : PlatformConfig {
   MatrixLayout matrixLayout() const {
     MatrixLayout l;
     l.panelWidth = panelWidth;
+    l.panelHeight = panelHeight;
     l.panels = panels;
     l.panelStart = panelStart;
     l.panelWiring = panelWiring;
@@ -131,6 +138,16 @@ struct DeviceConfig : PlatformConfig {
     p.i2sMclk = pinI2sMclk; p.ampEnable = pinAmpEnable;
     p.dfplayerEnabled = dfplayer;
     return p;
+  }
+  void setPinSet(const pins::PinSet& p) {
+    pinMatrix = p.matrix;
+    pinBtnLeft = p.btnLeft; pinBtnSelect = p.btnSelect; pinBtnRight = p.btnRight;
+    pinBattery = p.battery; pinLdr = p.ldr; pinBuzzer = p.buzzer;
+    pinI2cSda = p.i2cSda; pinI2cScl = p.i2cScl;
+    pinDfRx = p.dfRx; pinDfTx = p.dfTx;
+    pinI2sBclk = p.i2sBclk; pinI2sLrclk = p.i2sLrclk; pinI2sDout = p.i2sDout;
+    pinI2sMclk = p.i2sMclk; pinAmpEnable = p.ampEnable;
+    dfplayer = p.dfplayerEnabled;
   }
   bool validatePins(std::string& err) const { return pins::validate(pinSet(), err); }
 };

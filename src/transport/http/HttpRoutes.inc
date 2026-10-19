@@ -82,6 +82,21 @@ void HttpApiServer::dispatch() {
     sendResult(api::forbiddenOrigin());
     return;
   }
+  // A feature this build left out answers before its body is collected.
+  if constexpr (!buildcfg::buildFeatures().all()) {
+#if !AWTRIX_FEATURE_BROWSER_OTA
+    if (req.path == "/update") {
+      dropRawBody();
+      handleUpdateDone();
+      return;
+    }
+#endif
+    if (api::featurePolicy(buildcfg::buildFeatures(), req.path) == DispatchResult::Unavailable) {
+      dropRawBody();
+      sendResult(api::httpResponse({}, DispatchResult::Unavailable, {}));
+      return;
+    }
+  }
   if (takeBody(req)) return;
   if (rejectedByPolicy(req)) return;
 
@@ -162,9 +177,13 @@ bool HttpApiServer::takeBody(Request& req) {
     if (!received.empty()) {
       // Refuse instead of fragmenting: the copy needs one contiguous block, plus margin for
       // whatever parsing and dispatch will allocate on top of it.
+#if defined(AWTRIX_PLATFORM_RP2040)
+      if (received.size() > 15 && bodyCopyRoom() < received.size() + kBodyCopyMarginBytes) {
+#else
       if (received.size() > 15 &&
           heap_caps_get_largest_free_block(scriptBufferHeapCaps()) <
               received.size() + kBodyCopyMarginBytes) {
+#endif
         arena.reset();
         if (rawSource) arena.release();
         sendError(507, "insufficientStorage",
@@ -221,7 +240,8 @@ bool HttpApiServer::serveWebUi(const Request& req) {
 bool HttpApiServer::serveCommand(Request& req) {
   Command cmd;
   api::HttpResult immediate;
-  switch (api::routeHttp(req.method, req.path, std::move(req.body), cmd, immediate)) {
+  switch (api::routeHttp(req.method, req.path, std::move(req.body), cmd, immediate,
+                         buildcfg::buildFeatures())) {
     case api::RouteOutcome::Respond:
       probe::report("req:route", 128);
       probe::begin();
@@ -284,6 +304,20 @@ bool HttpApiServer::serveState(const Request& req) {
 bool HttpApiServer::serveDiagnostics(const Request& req) {
   EspReply reply(*server_);
   return api::routeDiagnostics(apiRequest(req), reply, [this](api::Reply& response) {
+#if defined(AWTRIX_PLATFORM_RP2040)
+    // Unlike the ESP32, the Pico reports zero (not FAILED) before the first scan.
+    const int count = wifiScan_.poll(WiFi);
+    if (count < 0) { response.send(api::wifiScanPending()); return; }
+    response.send({200, "application/json", {}}, true);
+    api::JsonStream output(api::replyChunk, &response);
+    api::WifiScanWriter writer(output);
+    for (int i = 0; i < count; ++i)
+      writer.network(WiFi.SSID(i), WiFi.RSSI(i), WiFi.encryptionType(i) != ENC_TYPE_NONE);
+    writer.end();
+    response.chunk("", 0);
+    WiFi.scanDelete();
+    wifiScan_.consumed();
+#else
     const int count = WiFi.scanComplete();
     const uint32_t now = millis();
     if (count >= 0) {
@@ -302,6 +336,7 @@ bool HttpApiServer::serveDiagnostics(const Request& req) {
     writer.end();
     response.chunk("", 0);
     WiFi.scanDelete();
+#endif
   }, logbuf::streamJsonAfter);
 }
 

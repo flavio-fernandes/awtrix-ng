@@ -405,12 +405,13 @@ greater than `maxBrightness`.
 
 Your LED matrix is described as **panels**: how wide one panel is, how many panels the data cable
 runs through, where the cable enters, and how the LED strip runs inside a panel. The total width is
-`panelWidth × panels`. Every panel is 8 pixels high. All panels form one row, left to right, on one
+`panelWidth × panels`; every panel is `panelHeight` pixels high (8–16, default 8). All panels form one row, left to right, on one
 data pin.
 
 | Key | Type | Range | Default | Effect | Reboot |
 |---|---|---|---|---|---|
 | `panelWidth` | int | 1–128 | `32` | Width of one panel in pixels. | yes, if the total width changes |
+| `panelHeight` | int | 8–16 | `8` | Height of every panel in pixels. Outside the range the write is `422 validationFailed` on `panelHeight`. | yes |
 | `panels` | int | 1–128 | `1` | How many identical panels the strip runs through, left to right. `panelWidth × panels` must be 32–128, otherwise the write is `422 validationFailed` on `panelWidth`. | yes, if the total width changes |
 | `panelStart` | enum | `topLeft` `topRight` `bottomLeft` `bottomRight` | `topLeft` | The corner of the first LED. Upper and lower case do not matter; anything else is `422`. | no |
 | `panelWiring` | enum | `rows` `columns` | `rows` | Whether the strip runs along the rows or down the columns inside a panel. | no |
@@ -430,10 +431,10 @@ The keys fall into three groups:
 - `mirror` and `rotate` change how the **picture** is shown. Only `rotate` swaps the buttons;
   `panelStart: bottomRight` only describes the cable, not the picture.
 
-Wiring changes show on the next frame. A new total width needs a restart
+Wiring changes show on the next frame. A new total width or height needs a restart
 (`POST /api/v1/device/reboot`).
 
-The panel is 8 pixels high and 32–128 pixels wide, so at most 1024 LEDs. If AWTRIX
+The panel is 8–16 pixels high and 32–128 pixels wide, so at most 2048 LEDs. If AWTRIX
 cannot use the stored size at startup, it shows 32×8 instead and keeps your stored values. If even
 that fails, the panel stays dark, but the web UI and API still work.
 
@@ -470,6 +471,19 @@ resulting size (`32 × 8 = 256 LEDs`) while you edit.
 If the picture is right but some colors are wrong, change `panelColorOrder`. Red and green swapped
 usually means an RGB panel with the default GRB order.
 <!-- /only -->
+<!-- only rp2040 -->
+## Panel {#panel-and-orientation}
+
+The Galactic Unicorn's display is built in: `panelWidth` is `53`, `panels` is `1`, and
+`panelHeight` is `11` or `8` (default `11`; at 8 the content is shown on rows 1–8). Any other
+value, or a change to where the panel starts, its wiring, its colour order or the chain keys, is
+refused with `422 validationFailed` naming the field. A height change applies after a reboot.
+`mirror` and `rotate` work as on every clock. Every pin is fixed too: a change to a `pin*` key,
+or switching on the DFPlayer, is refused with `400 invalidPinConfig`; see
+[Fixed wiring](../advanced/galactic-unicorn.md#fixed-wiring). A restored backup keeps the board's own pins and display size.
+
+<!-- /only -->
+
 <!-- only tc002 -->
 ## Panel {#panel-and-orientation}
 
@@ -599,7 +613,7 @@ Universe and pixel mapping, the five-second hold time and security notes are in
 | `tempDecimals` | uint8 | 0–2 | `0` | Number of decimal places in the Temperature app. Outside 0–2 → `422`. **Applies at once.** | no |
 <!-- /only -->
 | `debugMode` | bool | - | `false` | Writes detailed messages about requests and commands to the serial port and the log console. Off keeps the log short. **Applies at once.** | no |
-| `scriptingEnabled` | bool | - | `true` | Main switch for [scripts](../guides/scripting/index.md). Off<!-- only esp32 esp32-s3 --> frees about 40 KB of memory and<!-- /only --> no script runs. Your scripts are not deleted, and you can still **list, read, edit and delete** them – so you can fix a script that made the clock unreachable. Changes take effect after the next restart with the switch on again.<!-- only esp32 esp32-s3 --> To switch it off on the clock itself, hold **left + right** for three seconds while switching the clock on ([troubleshooting](../troubleshooting/troubleshooting.md#scripts-eat-the-memory-and-awtrix-never-comes-up)).<!-- /only --> | yes |
+| `scriptingEnabled` | bool | - | `true` | Main switch for [scripts](../guides/scripting/index.md). Off<!-- only esp32 esp32-s3 --> frees about 40 KB of memory and<!-- /only --> no script runs. Your scripts are not deleted, and you can still **list, read, edit and delete** them – so you can fix a script that made the clock unreachable. Changes take effect after the next restart with the switch on again.<!-- only esp32 esp32-s3 --> To switch it off on the clock itself, hold **left + right** for three seconds while switching the clock on ([troubleshooting](../troubleshooting/troubleshooting.md#scripts-eat-the-memory-and-awtrix-never-comes-up)).<!-- /only --><!-- only rp2040 --> To switch it off on the clock itself, hold **A and C** for three seconds while switching the clock on ([troubleshooting](../troubleshooting/troubleshooting.md#scripts-eat-the-memory-and-awtrix-never-comes-up)).<!-- /only --> | yes |
 
 Install, read and remove scripts with [`/api/v1/apps/script/{name}`](http.md#scripts); the script
 language is described in the [Scripting guide](../guides/scripting/index.md).

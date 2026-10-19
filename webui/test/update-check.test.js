@@ -10,7 +10,8 @@ function assert(cond, msg) {
 const release = (tag, extra = {}) => ({
   tag_name: tag, draft: false, prerelease: false, published_at: '2026-09-01T10:00:00Z',
   html_url: 'https://github.com/Blueforcer/awtrix-ng/releases/tag/' + tag,
-  assets: ['firmware-awtrix-ng.bin', 'firmware-awtrix-ng-s3-octal.bin', 'firmware-awtrix-ng-s3-quad.bin']
+  assets: ['firmware-awtrix-ng.bin', 'firmware-awtrix-ng-s3-octal.bin', 'firmware-awtrix-ng-s3-quad.bin',
+    'firmware-galactic-unicorn.uf2', 'firmware-galactic-unicorn-2w.uf2']
     .map(name => ({ name, browser_download_url: 'https://github.com/Blueforcer/awtrix-ng/releases/download/' + tag + '/' + name })),
   ...extra,
 });
@@ -18,9 +19,10 @@ const release = (tag, extra = {}) => ({
 const githubCalls = netlog => netlog.filter(l => l.includes('api.github.com')).length;
 const status = window => window.document.getElementById('upd-status');
 const install = window => window.document.getElementById('upd-install');
+const binUpload = window => window.document.querySelector('input[type=file][accept=".bin"]');
 
 async function openSystem(opts) {
-  const ctx = await boot();
+  const ctx = await boot(opts.caps ? { caps: Object.assign({ transitions: [] }, opts.caps) } : undefined);
   ctx.window.localStorage.clear();
   ctx.store.githubLatest = opts.latest;
   if (opts.device) Object.assign(ctx.store.device, opts.device);
@@ -42,6 +44,7 @@ async function testNewerReleaseOffersTheMatchingFile() {
   assert(notes.querySelector('svg use')?.getAttribute('href')==='#i-file' && notes.getAttribute('aria-label')==='Release notes', 'release notes use the existing accessible document icon');
   assert(notes.href.endsWith('/v1.1.2'),'document icon links to the matching release');
   assert(notes.nextElementSibling===install(window),'release notes sit directly left of the install button');
+  assert(binUpload(window),'an ESP32 keeps the manual .bin upload');
   await goto(window, '#/');
   await flush(60);
   const meta = window.document.querySelector('.meta');
@@ -49,6 +52,33 @@ async function testNewerReleaseOffersTheMatchingFile() {
   window.close();
 }
 
+async function testUsbOnlyBoardIsNotOfferedABrowserInstall() {
+  for (const image of ['firmware-galactic-unicorn.uf2', 'firmware-galactic-unicorn-2w.uf2']) {
+    const { window } = await openSystem({ latest: release('v1.1.2'), device: { updateImage: image },
+      caps: { browserOta: false } });
+    assert(/1\.1\.2/.test(status(window).textContent) && /USB/.test(status(window).textContent),
+      image + ': the newer release is named, with how to install it');
+    assert(install(window).textContent === 'Check for updates', image + ': no Download & install, which would always fail');
+    assert(!window.document.getElementById('upd-notes').hidden, image + ': the release notes link, where the .uf2 is, stays');
+    assert(!binUpload(window), image + ': no .bin upload, which /update refuses');
+    assert(/BOOTSEL/.test(window.document.body.textContent), image + ': the USB route is explained instead');
+    window.close();
+  }
+}
+
+// A new ESP32 variant needs no web UI change: browserOta, not a list of image names, decides.
+async function testUnknownBinImageWithBrowserOtaIsOffered() {
+  const image = 'firmware-awtrix-ng-c6.bin';
+  const latest = release('v1.1.2');
+  latest.assets.push({ name: image, browser_download_url: 'https://github.com/Blueforcer/awtrix-ng/releases/download/v1.1.2/' + image });
+  const { window } = await openSystem({ latest, device: { updateImage: image }, caps: { browserOta: true } });
+  assert(install(window) && !install(window).disabled && install(window).textContent !== 'Check for updates',
+    image + ': Download & install is offered');
+  assert(!!binUpload(window), image + ': the .bin upload is offered');
+  const maint = window.document.getElementById('sec-maint');
+  assert(maint && !/BOOTSEL/.test(maint.textContent), image + ': no USB route: ' + (maint ? maint.textContent.slice(0, 400) : 'no section'));
+  window.close();
+}
 async function testSameVersionIsUpToDate() {
   const { window } = await openSystem({ latest: release('v1.1.1') });
   assert(status(window) && /1\.1\.1/.test(status(window).textContent) && !/1\.1\.2/.test(status(window).textContent),
@@ -214,6 +244,8 @@ async function main() {
   await testBadFirmwareNeverUploads();
   await testRejectedFirmwareAllowsRetry();
   await testNewerReleaseOffersTheMatchingFile();
+  await testUsbOnlyBoardIsNotOfferedABrowserInstall();
+  await testUnknownBinImageWithBrowserOtaIsOffered();
   await testSameVersionIsUpToDate();
   await testPrereleaseDoesNotCount();
   await testCheckIsCachedAcrossVisits();

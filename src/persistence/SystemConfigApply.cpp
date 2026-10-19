@@ -5,9 +5,40 @@
 namespace awtrix {
 namespace sysconfig {
 
+void adoptFixedBoard(DeviceConfig& cfg, const pins::SocProfile& soc) {
+  if (soc.fixedWiring) cfg.setPinSet(soc.defaults);
+  if (!soc.fixedPanelWidth) return;
+  cfg.panelWidth = soc.fixedPanelWidth;
+  cfg.panels = 1;
+  if (cfg.panelHeight != soc.fixedPanelHeights[0] && cfg.panelHeight != soc.fixedPanelHeights[1])
+    cfg.panelHeight = soc.fixedPanelHeights[1];
+}
+
 bool apply(DeviceConfig& cfg, api::JsonReader obj, int& applied, ApplyError& err, Origin origin) {
   applied = 0;
   cfgrules::ConfigError cerr;
+#if defined(AWTRIX_PLATFORM_RP2040)
+  // A cross-board backup must not replace the built-in panel or soldered pins.
+  std::string restored;
+  if (origin == Origin::Restore) {
+    api::JsonWriter w(restored);
+    w.beginObject();
+    auto r = obj;
+    if (r.enterObject()) while (r.nextMember()) {
+      const std::string key(r.key());
+      // Restore only heights this fixed panel supports; all other panel/pin keys stay local.
+      const std::string value(r.valueText());
+      const bool validHeight = key == "panelHeight" && (value == "8" || value == "11");
+      // The light sensor polarity is fixed by the soldered wiring, too.
+      if (validHeight || (key.compare(0, 3, "pin") != 0 && key.compare(0, 5, "panel") != 0 &&
+                          key != "dfplayer" && key != "ldrOnGround"))
+        w.key(key.c_str()).raw(value);
+      if (!r.skipValue()) break;
+    }
+    w.endObject();
+    obj = api::JsonReader(restored);
+  }
+#endif
   // A restore is allowed to write empty strings to clear a field; an interactive edit is not,
   // because a blank box in the UI means "leave it alone".
   const bool allowEmptyClears = origin == Origin::Restore;
@@ -51,8 +82,33 @@ bool apply(DeviceConfig& cfg, api::JsonReader obj, int& applied, ApplyError& err
     err = {422, "validationFailed", cerr.message, cerr.field};
     return false;
   }
+#if defined(AWTRIX_PLATFORM_RP2040)
+  if (!cfgrules::validateFixedPanel(pins::activeProfile(), merged.panelWidth, merged.panels,
+                                   merged.panelHeight, cerr)) {
+    err = {422, "validationFailed", cerr.message, cerr.field};
+    return false;
+  }
+  if (merged.ldrOnGround != cfg.ldrOnGround) {
+    err = {400, "invalidPinConfig", "light sensor wiring is fixed", "ldrOnGround"};
+    return false;
+  }
+  if (merged.panelStart != cfg.panelStart || merged.panelWiring != cfg.panelWiring ||
+      merged.panelColorOrder != cfg.panelColorOrder || merged.panelSerpentine != cfg.panelSerpentine ||
+      merged.panelChainReverse != cfg.panelChainReverse ||
+      merged.panelChainSerpentine != cfg.panelChainSerpentine) {
+    err = {422, "validationFailed", "panel wiring is fixed", "panelWiring"};
+    return false;
+  }
+#endif
   std::string pinErr;
-  if (merged.gpioConfigurable && !merged.validatePins(pinErr)) {
+  // The Unicorn's soldered pins are checked like configurable ones, so a pin edit gets the same
+  // 400 as on the ESP32 (and PR 1); the panel checks above keep their 422.
+#if defined(AWTRIX_PLATFORM_RP2040)
+  constexpr bool checkPins = true;
+#else
+  const bool checkPins = merged.gpioConfigurable;
+#endif
+  if (checkPins && !merged.validatePins(pinErr)) {
     err = {400, "invalidPinConfig", pinErr, ""};
     return false;
   }

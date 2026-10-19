@@ -130,6 +130,7 @@ void refreshCapabilities() {
   platform.display.limits = kEspDisplayLimits;
   const int requestedWidth = espMatrixWidth(g_cfg.panelWidth, g_cfg.panels);
   platform.display.requestedWidth = requestedWidth > 0 ? requestedWidth : kMatrixWidthMin;
+  platform.display.requestedHeight = g_cfg.matrixLayout().height();
   platform.display.estimatedWireTimeUs = static_cast<uint32_t>(platform.display.pixelCount() * 30u);
   platform.display.ready = g_board->displayReady() && g_runtime->ready();
   auto caps = std::make_shared<const std::string>(g_runtime->capabilitiesJson(platform));
