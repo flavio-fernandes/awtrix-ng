@@ -424,6 +424,24 @@ void test_each_kind_needs_its_output(void) {
   TEST_ASSERT_TRUE(rig.pcm.mp3s.empty() && rig.track.played.empty());
 }
 
+// A clock with a speaker for melodies and no synthesizer, as the Galactic Unicorn (RP2040): a song,
+// 8-bit chip waves included, is refused as unavailable, never played as something else, and a
+// melody still plays.
+void test_a_song_without_a_synthesizer_is_unavailable(void) {
+  Rig rig;
+  rig.router.setPcm(nullptr);
+  rig.router.setTrack(nullptr);
+  for (const char* json : {"{\"song\":\"bpm 120\\ninst lead wave=pulse\\nlead: c4 e g c5\"}",
+                           "{\"song\":\"inst a wave=chiptri\\na: c4\",\"loop\":true}"}) {
+    assertResult(PlayResult::NoSink, rig.play(json), json);
+    TEST_ASSERT_EQUAL_STRING("no synthesizer", rig.detail.message.c_str());
+    assertResult(PlayResult::NoSink, rig.play(json, Group::App, "racer"), json);
+  }
+  TEST_ASSERT_TRUE(rig.tone.played.empty());
+  assertResult(PlayResult::Ok, rig.play("{\"rtttl\":\"x:d=4,o=5,b=120:c\"}"), "a melody still plays");
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(rig.tone.played.size()));
+}
+
 // A melody the parser accepted, or one that is stored, is never a mistake: while the speaker is
 // taken it cannot play now.
 void test_a_melody_the_speaker_cannot_take_is_unavailable(void) {
@@ -1222,6 +1240,7 @@ int main(int, char**) {
   RUN_TEST(test_names_that_could_leave_a_folder_are_never_looked_up);
   RUN_TEST(test_a_missing_melody_is_not_found_under_an_alert);
   RUN_TEST(test_each_kind_needs_its_output);
+  RUN_TEST(test_a_song_without_a_synthesizer_is_unavailable);
   RUN_TEST(test_a_melody_the_speaker_cannot_take_is_unavailable);
   RUN_TEST(test_a_router_without_sinks_is_harmless);
   RUN_TEST(test_volumes_are_master_times_group_and_reach_every_sink);
