@@ -11,7 +11,7 @@ the Pico fitted to your board:
 | Hardware | PlatformIO environment | USB image | Hardware status |
 | --- | --- | --- | --- |
 | Pico W, RP2040, 264 KB SRAM, 2 MB flash | `galactic_unicorn` | `firmware-galactic-unicorn.uf2` | 1.2.3 boot checked on a bare Pico W |
-| Pico 2 W, RP2350, 520 KB SRAM, 4 MB flash | `galactic_unicorn_2w` | `firmware-galactic-unicorn-2w.uf2` | 1.2.3 upgrade checked on a Galactic Unicorn |
+| Pico 2 W, RP2350, 520 KB SRAM, 4 MB flash | `galactic_unicorn_2w` | `firmware-galactic-unicorn-2w.uf2` | 1.2.3 upgrade, MQTT and Home Assistant checked on a Galactic Unicorn |
 
 See [Verification scope](#verification-scope) for the 1.2.3 bench results, earlier checks and
 known limits.
@@ -201,9 +201,11 @@ upgrade from 1.2.2 to 1.2.3. Bench checks on 1.2.3 covered:
 - BrickBreaker at 42 fps.
 - A settings backup round-trip and a reboot. The saved settings, scripts and apps were still
   present afterward.
+- MQTT and Home Assistant: Home Assistant discovered the clock and its entities stayed available.
+  The clock dropped a 16 KiB notification payload without disconnecting. It kept publishing device
+  state and showed the next normal notification.
 
 The 1.2.3 **Pico W** image booted to setup mode on a bare Pico W with no display attached.
-MQTT and Home Assistant were not verified on 1.2.3.
 
 ### AWTRIX NG 1.2.2 and earlier
 
