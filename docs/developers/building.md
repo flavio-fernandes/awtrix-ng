@@ -130,7 +130,7 @@ See [Galactic Unicorn](site:rp2040/advanced/galactic-unicorn/) for flashing and 
 | Board | `rpipicow` / `rpipico2w` |
 | Framework | `arduino`, earlephilhower core |
 | Filesystem | 512 KiB LittleFS |
-| Source filter | `core/` without `core/synth/`, `core/audio/` and `core/script/` (but `EngineScriptApplication.cpp`), `hal/BoardRegistry.cpp`, `hal/GalacticUnicornBoard.cpp`, `platform/rp2040/` |
+| Source filter | `core/` without `core/synth/` and `core/audio/` (Berry scripting included), `hal/BoardRegistry.cpp`, `hal/GalacticUnicornBoard.cpp`, the GIF, icon and JPEG decoders in `media/`, `platform/rp2040/`, and a listed set of persistence, log and network files (`build_src_filter` in `platformio.ini`) |
 | Output | `.pio/build/<env>/firmware.uf2`, flashed over USB BOOTSEL |
 
 ```bash
