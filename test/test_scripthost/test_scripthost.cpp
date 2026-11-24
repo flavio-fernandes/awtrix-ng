@@ -1286,6 +1286,29 @@ static void test_http_cancel_is_for_the_owner_only() {
   TEST_ASSERT_TRUE(fake.cancelled.empty());
 }
 
+// The Galactic Unicorn (RP2040) wires no script HTTP transport (fork issue #6): http.* with a
+// timeout soft-fails at once, as a network error does, http.cancel finds nothing, and no request is
+// held open, so a long timeout never keeps the script's slot.
+static void test_http_timeout_and_cancel_without_a_transport() {
+  TEST_ASSERT_NULL(g_svc.http);
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("W", app("var t, id\ndef init() self.t = '' end\n"
+                    "def setup()\n"
+                    "  self.id = http.get('http://x/', def(b, s) self.t += str(b) .. ' ' .. str(s) end, {'timeout': 60})\n"
+                    "end\n"
+                    "def on_button(b) self.t += ' ' .. str(self.id) .. ' ' .. str(http.cancel(self.id)) end\n"
+                    "def draw() end\n"
+                    "def check() return self.t end"));
+  RenderCtx ctx;
+  host.tick(ctx, "W");
+  TEST_ASSERT_EQUAL_STRING("nil 0", check(reg, "W").c_str());
+  TEST_ASSERT_FALSE(host.awaitsSlowAnswer("W"));
+  host.handleButton("W", "select");
+  TEST_ASSERT_EQUAL_STRING("nil 0 nil false", check(reg, "W").c_str());
+  host.remove("W");
+}
+
 static void test_http_requests_end_with_their_script() {
   FakeHttp fake;
   g_svc.http = &fake;
@@ -3326,6 +3349,7 @@ int main(int, char**) {
   RUN_TEST(test_http_cancel_ends_a_request_at_once);
   RUN_TEST(test_http_cancel_is_for_the_owner_only);
   RUN_TEST(test_http_requests_end_with_their_script);
+  RUN_TEST(test_http_timeout_and_cancel_without_a_transport);
   RUN_TEST(test_http_body_keeps_every_byte);
   RUN_TEST(test_only_a_request_with_a_timeout_is_a_slow_answer);
   RUN_TEST(test_remove_drops_subscriptions);
