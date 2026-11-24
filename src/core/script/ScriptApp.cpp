@@ -4,6 +4,7 @@
 
 #include "core/Settings.h"
 #include "core/render/Canvas.h"
+#include "core/render/ContentBand.h"
 #include "core/script/ScriptBindings.h"
 #include "core/script/ScriptExtension.h"
 #include "core/script/ScriptServices.h"
@@ -73,10 +74,12 @@ void ScriptApp::releaseIcons() {
 }
 
 // ERR:<name> in red. A name wider than the panel scrolls through once before the rotation
-// moves on, at the device's scroll settings; the error itself is read in the web UI.
-void ScriptApp::renderBroken(Canvas& canvas, const RenderCtx& ctx) {
-  canvas.clear();
+// moves on, at the device's scroll settings; the error itself is read in the web UI. On a panel
+// taller than eight rows it sits in the content band, like every other line of text.
+void ScriptApp::renderBroken(Canvas& panel, const RenderCtx& ctx) {
+  panel.clear();
   if (!ctx.font) return;
+  Canvas canvas = render::contentBand(panel, ctx.contentBand);
   const ScriptServices* svc = services();
   const Settings* settings = svc && svc->application ? svc->application->settings() : nullptr;
   ScrollRun run;

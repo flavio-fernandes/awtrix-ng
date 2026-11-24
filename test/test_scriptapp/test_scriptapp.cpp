@@ -6,6 +6,7 @@
 #include "berry.h"
 #include "core/apps/IApp.h"
 #include "core/render/Canvas.h"
+#include "core/render/ContentBand.h"
 #include "core/render/TextRenderer.h"
 #include "core/script/BerryVM.h"
 #include "core/script/ScriptApp.h"
@@ -1652,6 +1653,42 @@ static void test_a_long_err_frame_scrolls_through_once() {
   TEST_ASSERT_FALSE(shortApp.scrollHolds());
 }
 
+// On a panel taller than eight rows the ERR frame is drawn in the content band, so it lines up
+// with the clock and every other line of text: the 8-row frame, moved down by the band's top.
+static void test_err_frame_sits_in_the_content_band_of_a_tall_panel() {
+  Engine e;
+  script::ScriptApp app(e.vm, "BAD", "class B def setup() end end\nreturn B()", script::ScriptMeta{}, "",
+                        nullptr);
+  TEST_ASSERT_FALSE(app.ok());
+  RenderCtx ctx;
+  ctx.font = &kFont;
+  app.notifyVisible(true, &ctx);
+  Canvas band(32, 8);
+  app.render(band, ctx);
+  for (int h : {11, 16}) {
+    Canvas tall(32, h);
+    tall.clear(0x00FF00u);
+    app.render(tall, ctx);
+    const int top = render::contentBandTop(h);
+    TEST_ASSERT_TRUE(top > 0);
+    int lit = 0;
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < 32; ++x) {
+        const bool inBand = y >= top && y < top + 8;
+        const uint32_t want = inBand ? band.getPixel(x, y - top) : 0u;
+        TEST_ASSERT_EQUAL_HEX32(want, tall.getPixel(x, y));
+        if (want == 0xFF0000u) ++lit;
+      }
+    TEST_ASSERT_TRUE(lit > 0);
+  }
+  // A platform that enlarges pages itself (contentBand false) keeps the whole panel.
+  ctx.contentBand = false;
+  Canvas tall(32, 11);
+  app.render(tall, ctx);
+  for (int y = 0; y < 8; ++y)
+    for (int x = 0; x < 32; ++x) TEST_ASSERT_EQUAL_HEX32(band.getPixel(x, y), tall.getPixel(x, y));
+}
+
 static void test_instruction_limit_latches() {
   Engine e;
   script::ScriptApp app(e.vm, "Spin", "class Spin def draw() while true end end end\nreturn Spin()",
@@ -1902,6 +1939,7 @@ int main(int, char**) {
   RUN_TEST(test_setup_failure_latches);
   RUN_TEST(test_error_latches_and_renders_err_frame);
   RUN_TEST(test_a_long_err_frame_scrolls_through_once);
+  RUN_TEST(test_err_frame_sits_in_the_content_band_of_a_tall_panel);
   RUN_TEST(test_instruction_limit_latches);
   RUN_TEST(test_store_seed_loaded);
   RUN_TEST(test_store_seed_visible_in_setup);
