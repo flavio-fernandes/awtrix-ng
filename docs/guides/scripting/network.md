@@ -604,7 +604,9 @@ Each call returns at once, with an id for `http.cancel()`, or `nil` when the req
 | `keep` | bytes, `256` by default | how much is kept from the match on. `cap` can make it smaller, not larger |
 | `cap` | bytes, 8 KB by default | the most of the answer that is kept |
 | `body` | text | the request body of `http.request()` |
+<!-- only esp32 esp32-s3 tc002 -->
 | `timeout` | whole seconds, <!-- only esp32 esp32-s3 -->1–60<!-- /only --><!-- only tc002 -->1–120<!-- /only --> | how long the whole request may take, also while it waits for the first byte |
+<!-- /only -->
 
 - AWTRIX sets `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` itself and ignores
   them in your headers. All other headers are yours.
