@@ -4,7 +4,11 @@
 #include <cctype>
 #include <climits>
 
+#include "core/script/HttpHeaders.h"
 #include "platform/linux/oauth/OAuthText.h"
+#include "platform/linux/net/UrlPolicy.h"
+#include "platform/posix/Digest.h"
+#include "platform/posix/StartThread.h"
 
 namespace awtrix::oauth {
 namespace {
@@ -16,7 +20,7 @@ constexpr std::size_t kMaxCode = 2048;
 constexpr long long kDefaultLifetimeSeconds = 3600;
 constexpr long long kRenewEarlyMs = 60000;
 
-std::string bindingOf(const std::string& app, const Spec& spec) { return sha256Hex(app + "\n" + spec.line); }
+std::string bindingOf(const std::string& app, const Spec& spec) { return posix::sha256Hex(app + "\n" + spec.line); }
 
 bool blockedHeader(const std::string& name) {
   const std::string n = lowercase(name);
@@ -27,7 +31,7 @@ bool blockedHeader(const std::string& name) {
 bool cleanHeader(const std::pair<std::string, std::string>& h) {
   return !h.first.empty() && h.first.size() <= 64 && h.second.size() <= 1024 &&
          std::all_of(h.first.begin(), h.first.end(), [](unsigned char c) { return std::isalnum(c) || c == '-'; }) &&
-         std::all_of(h.second.begin(), h.second.end(), [](unsigned char c) { return c >= 32 && c != 127; });
+         std::all_of(h.second.begin(), h.second.end(), script::headerValueChar);
 }
 
 bool signedIn(const Record& r) { return !r.refreshToken.empty() || !r.accessToken.empty(); }
@@ -39,8 +43,7 @@ bool knownMethod(const std::string& method) {
 
 }
 
-Service::Service(Vault& vault, Transport transport, std::function<std::string(const std::string&)> source,
-                 std::function<long long()> clockMs)
+Service::Service(Vault& vault, Transport transport, script::SourceReader source, std::function<long long()> clockMs)
     : vault_(vault), transport_(std::move(transport)), source_(std::move(source)), clock_(std::move(clockMs)) {}
 
 Service::~Service() { stop(); }
@@ -49,7 +52,13 @@ void Service::begin() {
   std::lock_guard<std::mutex> lock(mutex_);
   if (worker_.joinable()) return;
   stopping_ = false;
-  worker_ = std::thread([this] { run(); });
+  began_ = true;
+}
+
+// With mutex_ held. Before begin() jobs wait in the queue for it; a new thread takes the lock when the
+// caller lets go of it.
+bool Service::haveWorker() {
+  return !began_ || stopping_ || worker_.joinable() || posix::startThread(worker_, [this] { run(); });
 }
 
 void Service::stop() {
@@ -69,7 +78,7 @@ Status Service::status(const std::string& app) {
   const auto spec = specLocked(app, &s.invalid);
   s.declared = spec.has_value() || !s.invalid.empty();
   if (!spec) return s;
-  s.provider = hostOf(spec->authorize);
+  s.provider = net::hostOf(spec->authorize);
   s.scope = spec->scope;
   s.pkce = spec->pkce;
   Record rec;
@@ -171,6 +180,11 @@ bool Service::submitCode(const std::string& app, const std::string& code, const 
   job.code = code;
   job.verifier = p->second.verifier;
   job.generation = generation_[app];
+  if (!haveWorker()) {
+    p->second.exchanging = false;
+    error = "no thread";
+    return false;
+  }
   jobs_.push_front(std::move(job));
   ready_.notify_one();
   return true;
@@ -192,13 +206,16 @@ void Service::signOut(const std::string& app) {
 void Service::dropStale() {
   std::lock_guard<std::mutex> lock(mutex_);
   vault_.keepOnly([this](const Record& record) {
-    const auto spec = parseSpec(source_(record.app));
+    const std::optional<std::string> source = source_(record.app);
+    if (!source) return true;
+    const auto spec = parseSpec(*source);
     return spec && record.binding == bindingOf(record.app, *spec);
   });
   records_.clear();
 }
 
 bool Service::eraseAll() {
+  stop();
   std::lock_guard<std::mutex> lock(mutex_);
   records_.clear();
   access_.clear();
@@ -222,18 +239,18 @@ uint32_t Service::request(const std::string& app, const std::string& method, con
   job.call.url = url;
   job.call.body = body;
   job.call.cap = std::clamp<std::size_t>(cap, 1, kMaxCap);
-  bool contentType = false;
   for (const auto& h : headers) {
     if (!cleanHeader(h) || blockedHeader(h.first)) return 0;
-    contentType = contentType || lowercase(h.first) == "content-type";
     job.call.headers.push_back(h);
   }
-  if (!body.empty() && !contentType) job.call.headers.emplace_back("Content-Type", "application/json");
+  if (!body.empty() && !script::hasHeader(job.call.headers, "Content-Type"))
+    job.call.headers.emplace_back("Content-Type", "application/json");
   job.app = app;
   job.generation = generation_[app];
   job.id = nextId_++;
   if (job.id == 0) job.id = nextId_++;
   const uint32_t id = job.id;
+  if (!haveWorker()) return 0;
   jobs_.push_back(std::move(job));
   ready_.notify_one();
   return id;
@@ -269,6 +286,7 @@ void Service::sourceSaved(const std::string& app) {
   std::lock_guard<std::mutex> lock(mutex_);
   specs_.erase(app);
   records_.erase(app);
+  if (!source_(app)) return;
   const auto spec = specLocked(app);
   Record unused;
   if (!spec) eraseLocked(app);
@@ -284,8 +302,10 @@ void Service::sourceRemoved(const std::string& app) {
 std::optional<Spec> Service::specLocked(const std::string& app, std::string* invalid) {
   auto it = specs_.find(app);
   if (it == specs_.end()) {
+    const std::optional<std::string> source = source_(app);
+    if (!source) return std::nullopt;
     Parsed p;
-    p.spec = parseSpec(source_(app), &p.invalid);
+    p.spec = parseSpec(*source, &p.invalid);
     it = specs_.emplace(app, std::move(p)).first;
   }
   if (invalid) *invalid = it->second.invalid;

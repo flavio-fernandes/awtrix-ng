@@ -2,7 +2,8 @@
 // contract (arguments, the descriptors of RuntimeContract.h, environment, session), records the
 // result in <data>/report-<pid>, the boot intro it was given in <data>/intro-<pid>, the CA and
 // web update flags in <data>/update-args-<pid>, its start reason as a line of <data>/starts and
-// its --uid ("none" without one) as a line of <data>/uids, then behaves according to <data>/mode:
+// its --uid ("none" without one) as a line of <data>/uids, its --activation-id ("none" without one)
+// as a line of <data>/activations, then behaves according to <data>/mode:
 //   ok        hello, ready, log every received datagram, send lines from <data>/outbox
 //   crash     exit 1 right away
 //   closed    close the supervisor channel, then exit 1 (a start that fails before readiness)
@@ -53,14 +54,18 @@ void writeAll(const std::string& path, const std::string& text, bool append) {
 }
 
 std::string contract(int argc, char** argv, const std::string& data, bool& audio, std::string& voice,
-                     std::string& intro, std::string& update, std::string& start, std::string& uid) {
+                     std::string& wake, std::string& vad, std::string& intro, std::string& update,
+                     std::string& start, std::string& uid, std::string& activation) {
   const char* expected[] = {nullptr, "--board", "tc002", "--tc002-input-fds", "100,101", "--supervisor-fd", "103",
                             "--data", nullptr, "--webui", nullptr, "--lan", "--port", nullptr,
                             "--start-reason", nullptr};
   constexpr int kBase = sizeof expected / sizeof expected[0];
   intro = "none";
   uid = "none";
+  activation = "none";
   voice = "none";
+  wake = "none";
+  vad = "none";
   if (argc < kBase) return "argument count " + std::to_string(argc);
   for (int i = 1; i < kBase; ++i)
     if (expected[i] && std::strcmp(argv[i], expected[i]) != 0) return std::string("argument ") + argv[i];
@@ -73,12 +78,26 @@ std::string contract(int argc, char** argv, const std::string& data, bool& audio
     if (uid.size() != 12 || uid.find_first_not_of("0123456789abcdef") != std::string::npos) return "uid " + uid;
     next += 2;
   }
+  if (next + 1 < argc && std::strcmp(argv[next], "--activation-id") == 0) {
+    activation = argv[next + 1];
+    if (activation.size() != 64 || activation.find_first_not_of("0123456789abcdef") != std::string::npos)
+      return "activation id " + activation;
+    next += 2;
+  }
   audio = next + 1 < argc && std::strcmp(argv[next], "--tc002-audio-fd") == 0;
   if (audio) {
     if (std::strcmp(argv[next + 1], "104") != 0) return std::string("argument ") + argv[next + 1];
     next += 2;
     if (next + 1 < argc && std::strcmp(argv[next], "--speech-voice") == 0) {
       voice = argv[next + 1];
+      next += 2;
+    }
+    if (next + 1 < argc && std::strcmp(argv[next], "--wake-word") == 0) {
+      wake = argv[next + 1];
+      next += 2;
+    }
+    if (next + 1 < argc && std::strcmp(argv[next], "--vad") == 0) {
+      vad = argv[next + 1];
       next += 2;
     }
   }
@@ -140,8 +159,9 @@ void reportReady(bool valid) {
                      : "{\"v\":2,\"type\":\"ready\",\"board\":\"tc002\",\"width\":32,\"height\":8,\"input\":false}");
 }
 
+// Not pause(): a SIGTERM between the check and the call would be lost.
 void waitForTerm() {
-  while (!terminated) ::pause();
+  while (!terminated) ::poll(nullptr, 0, 20);
 }
 
 }
@@ -149,39 +169,47 @@ void waitForTerm() {
 int main(int argc, char** argv) {
   ::prctl(PR_SET_PTRACER, PR_SET_PTRACER_ANY, 0, 0, 0);
   const std::string data = argc > 8 ? argv[8] : "";
+  std::string mode = readAll(data + "/mode");
+  while (!mode.empty() && (mode.back() == '\n' || mode.back() == ' ')) mode.pop_back();
+  if (mode.empty()) mode = "ok";
+  // Set up before the report: tests send SIGTERM as soon as they have read it.
+  struct sigaction action{};
+  action.sa_handler = mode == "stubborn" ? SIG_IGN : onTerm;
+  sigemptyset(&action.sa_mask);
+  sigaction(SIGTERM, &action, nullptr);
   bool audio = false;
   std::string voice;
+  std::string wake;
+  std::string vad;
   std::string intro;
   std::string update;
   std::string start;
   std::string uid;
-  const std::string problem = contract(argc, argv, data, audio, voice, intro, update, start, uid);
+  std::string activation;
+  const std::string problem =
+      contract(argc, argv, data, audio, voice, wake, vad, intro, update, start, uid, activation);
   writeAll(data + "/starts", start + "\n", true);
   writeAll(data + "/uids", uid + "\n", true);
+  writeAll(data + "/activations", activation + "\n", true);
   writeAll(data + "/intro-" + std::to_string(::getpid()), intro + "\n", false);
   writeAll(data + "/voice-" + std::to_string(::getpid()), voice + "\n", false);
+  writeAll(data + "/wake-" + std::to_string(::getpid()), wake + "\n", false);
+  writeAll(data + "/vad-" + std::to_string(::getpid()), vad + "\n", false);
   writeAll(data + "/update-args-" + std::to_string(::getpid()), update + "\n", false);
   if (audio) {
     std::string heard = "no helper message";
     pollfd item{104, POLLIN, 0};
     char buffer[256];
-    if (::poll(&item, 1, 2000) > 0) {
+    if (::poll(&item, 1, 30000) > 0) {
       const ssize_t count = ::recv(104, buffer, sizeof buffer, 0);
       heard = count > 0 ? std::string(buffer, static_cast<std::size_t>(count)) : "helper closed";
     }
     writeAll(data + "/audio-" + std::to_string(::getpid()), heard + "\n", false);
   }
-  std::string mode = readAll(data + "/mode");
-  while (!mode.empty() && (mode.back() == '\n' || mode.back() == ' ')) mode.pop_back();
-  if (mode.empty()) mode = "ok";
   writeAll(data + "/report-" + std::to_string(::getpid()), problem.empty() ? "valid\n" : "invalid: " + problem + "\n",
            false);
   std::printf("fake runtime pid %d mode %s\n", static_cast<int>(::getpid()), mode.c_str());
   std::fflush(stdout);
-  struct sigaction action{};
-  action.sa_handler = onTerm;
-  sigemptyset(&action.sa_mask);
-  sigaction(SIGTERM, &action, nullptr);
 
   if (mode == "crash") return 1;
   if (mode == "closed") {
@@ -190,7 +218,6 @@ int main(int argc, char** argv) {
     return 1;
   }
   if (mode == "stubborn") {
-    ::signal(SIGTERM, SIG_IGN);
     for (;;) ::pause();
   }
   if (mode == "silent") {

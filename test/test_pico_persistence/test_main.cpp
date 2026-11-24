@@ -221,6 +221,11 @@ void restore_and_disabled_stores() {
   radiostore::save("[]");
   TEST_ASSERT_FALSE(radiostore::pending());
   TEST_ASSERT_FALSE(testFiles.count("/radio.json"));
+  // 1.2.3 backups carry radio.json; the Pico has no station list, so it is refused, not stored.
+  TEST_ASSERT_FALSE(sink.applyRadioStations(R"({"stations":[]})", err));
+  TEST_ASSERT_EQUAL_STRING("no station list on this device", err.c_str());
+  TEST_ASSERT_FALSE(testFiles.count("/radio.json"));
+  err.clear();
   // A settings entry is applied even when its save fails, and stays pending (a restore answers
   // 507) until the device's own retry stores it.
   failRename = true;

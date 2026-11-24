@@ -13,7 +13,7 @@ it.
 <!-- only tc002 -->
 | Request body (HTTP) | 2 MiB for any request body, JSON or upload | `413 payloadTooLarge`, nothing is applied |
 <!-- /only -->
-| MQTT command payload | 8192 bytes for the whole message, topic included | the message is dropped unread: no error, no `/result` reply |
+| MQTT command payload | 8192 bytes for the whole message, topic included | the message is dropped unread: no error, no `/result` reply, a line in the log. Over 64 KiB the clock also connects to the broker again |
 | App and script names | 1–32 characters of `A–Z`, `a–z`, `0–9`, `_`, `-` | `400 invalidName` |
 | JSON nesting | 16 levels of objects and arrays | `400 invalidJson` |
 <!-- only tc002 -->
@@ -94,8 +94,17 @@ Layouts have their own budgets, listed in `capabilities.layouts.limits`. See
 | HTTP response body | 8 KB, or `cap` if the request sets one - lowered to the free memory when the answer starts | the body is cut at that size. To keep only the part you need, use [`find`](../guides/scripting/network.md#picking-one-field-out-of-a-big-answer) |
 | Free memory while a response arrives | enough for the rest of the body | the whole request fails: the callback gets `nil` and the **real** status code |
 | HTTP connect and read timeout | <!-- only esp32 esp32-s3 -->5 s each<!-- /only --><!-- only tc002 -->3 s to connect, 5 s to read<!-- /only --> | the callback gets `nil, 0` |
-| HTTP request unanswered | 30 s | the callback gets `nil, 0` |
+| HTTP `timeout` | <!-- only esp32 esp32-s3 -->1–60 s<!-- /only --><!-- only tc002 -->1–120 s<!-- /only -->, whole seconds, replaces the read timeout | the callback gets `nil, 0`. Outside the range at once |
+<!-- only tc002 -->
+| Looking up a service's name | not limited by `timeout`, and cannot be cancelled | a name server that does not answer holds this request and those behind it |
+<!-- /only -->
+| HTTP request unanswered | 30 s, plus `timeout` if the request sets one | the callback gets `nil, 0` |
+| Waiting for its turn | 30 s | the request is not sent, and the callback gets `nil, 0` |
 | HTTP requests in flight | 8 per script | `http.get()` calls back `nil, 0` at once |
+<!-- only tc002 -->
+| HTTP bodies waiting | 4 MB across all scripts | `http.post()` calls back `nil, 0` at once |
+<!-- /only -->
+| HTTP requests at a time | 1 for all scripts together<!-- only tc002 -->, and 1 more for those with `timeout`<!-- /only -->, with at most <!-- only esp32 esp32-s3 -->16 in the queue<!-- /only --><!-- only tc002 -->8 in each queue<!-- /only --> | a slow request delays the others, also those of other scripts, and the wait counts towards the 30 s. With the queue full, `http.get()` calls back `nil, 0` at once |
 | Script timers | 8 per app, 32 in total; each 25 ms to 1 day | `timer.after()` and `timer.every()` return `nil` |
 | MQTT subscriptions | 8 per script | further `mqtt.subscribe()` calls are ignored |
 | MQTT messages waiting | 32, shared by all scripts | the oldest waiting message is dropped |
@@ -116,6 +125,53 @@ button press and each HTTP callback starts again at the platform's limit. A `try
 The same script icon ID drawn at several positions counts as one icon. All copies animate
 together.
 
+<!-- only tc002 -->
+## Voice in scripts
+
+These apply to [`import voice`](../guides/voice-scripts.md). A negative value goes to the callback as
+one of the [status values](voice.md#status-values).
+
+| Limit | Cap | When you hit it |
+| --- | --- | --- |
+| Clips | 4 per app, 4 MB together | the callback gets `voice.FULL`, nothing is kept |
+| Room for a running recording | its `max` at about 32 KB per second, for as long as it runs | counts towards the 4 MB |
+| Room for a running download | 2 MB until it has ended | counts towards the 4 MB |
+| Free memory | every clip must leave 4 MB of the clock's memory free, and room for a running recording's whole limit | the callback gets `voice.FULL` |
+| Recordings at a time | 1 on the clock, by the app on the display | the callback gets `voice.BUSY` |
+| Pause that ends a recording (`silence`) | 300–3000 ms, 800 by default | the callback gets `voice.BAD` |
+| Wait for someone to speak (`wait`) | 1–15 s, 5 by default | outside the range `voice.BAD`. With nobody speaking, `voice.SILENCE` |
+| Longest recording (`max`) | 1–30 s, 15 by default | outside the range `voice.BAD`. At the limit the recording ends with what it has |
+| Sends and fetches at a time | 2 per app, running one at a time across all apps | a third of the app: the callback gets `voice.BUSY`. A long one delays those behind it, also those of other apps |
+| Form fields (`fields`) | 16 | the callback gets `voice.BAD` |
+| Time for a send | `timeout`, 1–120 s, 30 s by default. It starts when the send's turn comes | the callback gets `nil, 0`. Outside the range `voice.BAD` |
+| Time for a fetch | `timeout`, 1–120 s, 15 s by default. It starts when the fetch's turn comes | the callback gets `nil, 0`. Outside the range `voice.BAD` |
+| Connecting for a send or fetch | 3 s, within `timeout` | the callback gets `nil, 0` |
+| Looking up a service's name | not limited by `timeout`, and cannot be cancelled | a name server that does not answer holds this send or fetch and those behind it, also past `timeout` |
+| Answer to a send | 8 KB, or `cap` if you set one | the body is cut at that size, as for [`http`](#scripting) |
+| Memory for a send or fetch | twice its `cap` for a send, twice its `body` for a fetch, above the 4 MB kept free and a running recording's whole limit. A body with `{secret:key}` needs room for a third copy and 4 KB more | the callback gets `voice.FULL` |
+| Fetch bodies waiting | 4 MB across all apps | the callback gets `voice.FULL` |
+| Size of a fetch | 2 MB of WAV or MP3 | the callback gets `voice.BAD`. With too little memory left, `voice.FULL` |
+| Type of a fetch | `Content-Type` `audio/mpeg`, `audio/mp3`, `audio/wav`, `audio/wave`, `audio/x-wav` or `application/octet-stream` | the callback gets `voice.BAD` |
+| Callbacks in a row | 32 | the others follow a moment later |
+
+## API keys
+
+These apply to [`@secret`](../guides/scripting/network.md#api-keys) and
+[`/api/v1/secrets`](http.md#api-keys).
+
+| Limit | Cap | When you hit it |
+| --- | --- | --- |
+| `@secret` lines | 4 per script | the line is invalid: no key of the app works and the settings show why. Saving such a script erases the app's keys |
+| Key name | 1–24 characters of `A–Z`, `a–z`, `0–9`, `_`, not starting with a digit | the same |
+| `label` | 48 characters | the same |
+| `help` | 96 characters | the same |
+| `hosts` | required, 1–8 hosts | the same |
+| Value | 512 bytes, no control characters such as a line break or a tab, the same rule as a script's header value | `422 validationFailed`, nothing changes |
+| `{secret:key}` in an address | only in the path or the query | in the scheme, the host, the port or the user name the address is invalid: `http.*` gets `nil, 0`, `voice.send` and `voice.fetch` get `voice.BAD`. After `#` nothing is sent, and the callback gets `nil, 0` |
+| An address, header value or body with `{secret:key}` | at most 4 KB longer once filled | nothing is sent, and the callback gets `nil, 0` |
+| `PUT` body | 16 KB | `400 invalidJson`, nothing changes |
+
+<!-- /only -->
 ## Sounds<!-- only esp32-s3 tc002 --> and radio<!-- /only --> {#sounds-and-radio}
 
 The messages for rejected sounds are listed in [Audio playback errors](errors.md#audio-playback).

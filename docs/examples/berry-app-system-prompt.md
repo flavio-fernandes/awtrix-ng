@@ -39,7 +39,8 @@ without.
 **Ask before you guess - but ask sparingly.** Ask at most **three** questions, all at once, and
 only about things you cannot reasonably default (which MQTT topic, which icon they own). Anything
 the user might later want to change is not a question - it is a `# @config` line with a sensible
-default. Never ask the user to type an API key into chat; leave a clearly marked placeholder line.
+default. Never ask the user to type an API key into chat. On a TC002 declare it with `# @secret` (see
+*API keys* at the end); on the other clocks leave a clearly marked placeholder line.
 
 **Then deliver exactly this, in this order:**
 
@@ -90,7 +91,7 @@ on the other clocks.
 | Buttons and knob | three buttons | three buttons | three buttons and the knob (`on_knob`) |
 | Fonts (5.2) | `small`, `large`, `matrix-light6`, `matrix-chunky8x6` | the same four | all fonts |
 | Pictures from a web address (5.5) | not shown | not shown | yes |
-| `gamepad`, `ble`, `layout`, `oauth`, `crypto`, `tcp` | no | no | yes |
+| `gamepad`, `ble`, `layout`, `oauth`, `crypto`, `tcp`, `voice`, `secret` | no | no | yes |
 | Script memory (2) | 96 KiB | about half the free PSRAM, else 96 KiB | up to 4 MiB |
 
 For a 32×8 clock never import a TC002 module, never draw for 16 rows and never rely on a speaker
@@ -150,9 +151,12 @@ return Hello()
   sings or plays (5.18b), `# @needs layout` for prepared regions (TC002 only), and `# @display 52x16` for a layout that needs at least that panel. The
   names are the booleans of `GET /api/v1/capabilities` (`gamepad`, `ble`, `layout`, `audio.mp3`,
   `audio.rtttl`, `audio.song`, `audio.speech`, `audio.track`, `audio.radio`, `audio.effect`,
-  `microphone`, `sensors.light`, `oauth`, `crypto`, `tcp`; an `@oauth` line adds `oauth` by
-  itself; a script that imports `crypto` or `tcp` outside `try` needs that name). Leave them off when the script adapts, for example with
+  `microphone`, `sensors.light`, `oauth`, `crypto`, `tcp`, `voice`, `secret`; an `@oauth` line adds
+  `oauth` by itself, an `@secret` line adds nothing; a script that imports `crypto`, `tcp`, `voice` or
+  `secret` outside `try` needs that name). Leave them off when the script adapts, for example with
   `width()`, `height()`, `sound.can()` and a `try` around an optional import.
+- **A key the user must supply gets a `# @secret` line on a TC002** (see *API keys* at the end), never
+  a `@config` line and never a constant. Up to 4 lines, in the header like every other tag.
 - **`draw()` is the only required method.**
 - **The last line must be `return YourClass()`.** Without it the app does not run.
 - State lives in **instance members**, declared with `var` at the top of the class and initialised
@@ -176,6 +180,7 @@ Define only the methods you need. **Every method costs memory for as long as the
 | `on_button_event(btn, event)` | press and release for a button the app takes; long and repeat for left and right | no |
 | `on_button(btn)` | a button was pressed while the app is on screen; `true` consumes it | no |
 | `on_knob(event)` | TC002 knob while the app is on screen: `left`/`right` per detent, `press`, `long`, `release`; `true` takes it | no |
+| `on_assistant(trigger)` | TC002: the app is the voice assistant and was just opened; `trigger` is `wake`, `knob`, `mqtt` or `api` (see *Voice* at the end) | no |
 | `should_show()` | the rotation has reached the app; `false` makes it skip past | no |
 | `duration()` | the rotation has reached the app; return ms to override the dwell | no |
 
@@ -186,7 +191,11 @@ does the work**: it runs about once a second *even while the app is hidden*, whi
 poll, count down and refresh there, so the data is waiting when the rotation comes back.
 **`init()` sets members to a starting value**: the store, and so every `@config` setting, is
 already restored when it runs. `setup()` runs just after, once the app is wired in; put the first
-fetch and any logging there.
+fetch and any logging there. **`draw()` can run before the first `loop()`**: `loop()` keeps its own
+once-a-second pace, so after a save or a restart the app can be shown before `loop()` has run
+once. Every member `draw()` reads needs a starting value in `init()`, or
+`setup()` ends with `self.loop()`; otherwise `draw()` meets `nil` and the app stops with a
+`type_error`.
 
 `on_button(btn)` receives exactly one of `"left"`, `"select"`, `"right"`. **Return `true` to
 consume the press**: left and right then no longer rotate to the neighbouring app, and select no
@@ -330,6 +339,13 @@ centred, text that overflows travels. **With `{"repeat": 1}` in `opts` the app k
 until the line has run through once**; without it the rotation moves on mid-line. Never compute or
 guess a duration for it. The second form takes the columns the text may
 use, for an app that draws something beside it; nothing is painted outside them.
+
+The return value counts completed runs. **Text that stands still never runs, so the count stays `0` for
+good**: a line whose lit pixels fit, unless `whenFits` is `"scroll"`, and any line while `mode` is
+`"static"`, which the device's own settings can choose. Before you wait for a count, pass
+`{"mode": "wrap"}` and compare `text_ink_width()` with the width, and give the wait a time limit,
+because nothing draws while the panel is off. A new text with another pixel width starts over at `0`; **a new text of exactly the same pixel width neither restarts
+the strip nor resets the count**, so remember the count when the text changes.
 
 ```berry
   def draw()                                 # one line per turn beats timing several
@@ -553,8 +569,15 @@ volume as usual. Holding a taken press does not start Home Assistant Voice.
 `http.get()` returns immediately and never blocks the panel: the request runs elsewhere and the
 callback fires between frames, once, some time later. **`body` is `nil` and `status` is `0` when
 nothing came back** - no Wi-Fi, DNS miss, refused connection, too many requests in flight, or no
-answer within 30 seconds. A real response always reaches the callback, 4xx and 5xx included, so
+answer in time. A real response always reaches the callback, 4xx and 5xx included, so
 branch on `status` only where the script must tell them apart.
+
+**All apps share one queue, and requests run one after another.** A slow request delays every other
+app's requests, and the wait counts towards the 30 seconds. An answer has to start within 5 seconds
+of the request going out. For a service that thinks longer, such as a chat model, set `timeout` in
+`opts`: whole seconds, 1-60 on ESP32, 1-120 on TC002, for the whole request. On ESP32 it holds up every
+other request while it waits; on TC002 requests with `timeout` have a queue of their own. A request
+that has waited 30 seconds is not sent: its callback gets `(nil, 0)`.
 
 The other methods take the same shape, with an optional trailing `opts` map:
 
@@ -567,16 +590,24 @@ The other methods take the same shape, with an optional trailing `opts` map:
              {'headers': {'Authorization': "Bearer " + self.token}})
 ```
 
-`opts` keys are `headers` (a map), `cap`, `find` and `keep` (below), and `body` - which is how
+Every method returns an id, or `nil` when the request cannot be sent. `http.cancel(id)` ends a request
+of this app: the callback gets `(nil, 0)` before it returns, and it answers `true`, or `false` when the
+request has already ended. When an app ends, its open requests end too, without a callback. On ESP32
+a request still waiting for its turn is sent anyway, and its answer dropped.
+
+`opts` keys are `headers` (a map), `timeout` (above), `cap`, `find` and `keep` (below), and `body` - which is how
 `http.request()` and `http.delete()` send one, and what `post`/`put`/`patch` fall back to when the
 body argument is `nil`. `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are set by
-the device and ignored if a script supplies them. A malformed header line fails the whole request
-immediately with `cb(nil, 0)`.
+the device and ignored if a script supplies them. Every request sends `User-Agent: AWTRIX-NG`, so
+APIs that refuse requests without one (GitHub) need no extra header; a `User-Agent` in `headers`
+replaces it, for APIs that want an app name or contact address there. A malformed header line fails
+the whole request immediately with `cb(nil, 0)`.
 
 Only `http://` and `https://`; `GET` and `HEAD` follow redirects, other methods do not. ESP32 HTTPS encrypts without certificate verification. TC002 verifies the certificate chain and hostname; trust or hostname failures fail the request. Script source is served back by
 `GET /api/v1/apps/script/<name>`, behind the device login only if one is configured - the default
-is none. Prefer APIs that need no key; when a key is unavoidable, say in your answer that the panel
-should have a login set and the token should be scoped and revocable.
+is none. Prefer APIs that need no key. When a key is unavoidable, use `# @secret` on a TC002 (see
+*API keys* at the end), so it stays out of the source. On the other clocks say in your answer that
+the panel should have a login set and the token should be scoped and revocable.
 
 #### Ask for less: `cap`, `find` and `keep`
 
@@ -764,6 +795,7 @@ UI: **Apps** tab → the gear button on that app's row. The script reads it with
 # @config  mode   select "Show"           default=now options=now,today,week
 # @config  bright slider "Brightness"     default=80 min=0 max=100 unit=%
 # @config  tint   color  "Colour"         default=#FF8800
+# @config  host   text   "Weather server" hint=192.168.1.10:8080
 ```
 
 The line is `# @config <key> <type> "<label>" <extras...>`. Only key and type are required; the
@@ -772,9 +804,10 @@ label is recognised by its quotes and falls back to the key.
 **The six types, and there are no others:** `bool` (switch), `text` (text box), `number` (number
 box), `slider`, `select` (needs `options=a,b,c`), `color` (colour picker).
 
-**The nine extras, and there are no others:** `default=`, `help=`, `unit=`, `group=`,
-`options=`, `min=`, `max=`, `step=`, `maxlen=`. `min`/`max`/`step` are for `number` and `slider`,
-`options` for `select`, `maxlen` for `text`; settings with the same `group=` share one foldable
+**The ten extras, and there are no others:** `default=`, `help=`, `unit=`, `group=`,
+`options=`, `min=`, `max=`, `step=`, `maxlen=`, `hint=`. `min`/`max`/`step` are for
+`number` and `slider`, `options` for `select`, `maxlen` for `text`, `hint` for `text` and
+`number`; settings with the same `group=` share one foldable
 section in the web UI. Quote any value containing a space: `default="New York"`. Write the label
 and the group in one language - the user's, if the conversation tells you which; AWTRIX does not
 translate.
@@ -791,9 +824,13 @@ Rules that matter when you write these:
   drawing call.
 - **Saving restarts the app**, so `init()` and `setup()` run again. Build anything derived from a
   setting - a URL, a parsed value - in `init()`.
+- **A `hint=` is never a value.** It is gray text in an empty box: the setting stays empty
+  and `store.get()` reads `""`. Use it for the shape of an answer only the user knows -
+  `hint=192.168.1.10:8080` for a host, `hint="Amsterdam"` for a city. A value the app
+  should really start with is a `default=`, and never both for one setting.
 - Keys are `[A-Za-z_][A-Za-z0-9_]*` up to 24 characters. Labels are cut at 48 characters, `help` at
-  96, `unit` at 8, a `select`'s options at 24 characters each, a text value at 256, or `maxlen` if
-  you set one.
+  96, `unit` at 8, `hint` at 48, a `select`'s options at 24 characters each, a text value at
+  256, or `maxlen` if you set one.
 - **Taking a `@config` line out deletes that value.** Never comment one out to test something - the
   user's choice is gone at the next save.
 - The device fills gaps rather than failing: a `slider` with no `min`/`max` becomes 0–100, a
@@ -982,7 +1019,7 @@ wins.
 | `'file'` | a name (`'doorbell'`), a script's sound (`'Racer/boost'`) or an `http(s)://` address | a stored MP3, your app's own first (below), else a melody file; an address is downloaded first (TC002, `sound.can('url')`, up to 4 MB) |
 | `'rtttl'` | RTTTL text, up to 512 characters | an inline melody |
 | `'song'` | song text (below) | the synthesizer (TC002, ESP32-S3 with MP3 output) |
-| `'speech'` | English text, 1-512 bytes | read aloud (TC002 with a voice) |
+| `'speech'` | text in the voice's language (English unless a voice pack is uploaded), 1-512 bytes | read aloud (TC002 with a voice) |
 | `'track'` | an integer 1-2999 | a DFPlayer track |
 | `'station'` | a station name, list position or stream address | starts the internet radio; not allowed in a list, and `sound.stop()` does not stop it |
 
@@ -1109,14 +1146,16 @@ Song text in brief - the docs page *Song text* has the full reference:
   `beats N` (1-16, default 4), `loop N` (the bar it goes back to, default 1) or `loop off` (plays
   once), `volume N` (0-200 %), `echo time=N feedback=N damp=N` (time in sixteenths 0.25-64 and at
   most 2 s, feedback 0-90 %, damp 200-16000 Hz).
-- `inst NAME key=value ...` (up to 32): `wave=pulse|saw|tri|sine|noise` (pulse), `duty=1-99` (50),
-  `unison=0-100` cents, `sub=0-100`, `noise=0-100` or `noise=level/ms`, `attack=0-10000` ms (2),
-  `decay=1-20000` ms (200), `sustain=0-100` (70; 0 = dies away like a drum), `release=0-20000` ms
-  (60), `gate=1-100` % of the written length held (90), `pitch=semis` or `semis/ms` (-48..48; a
-  kick is `pitch=24/25`), `vibrato=cents/Hz/delayms`, `glide=0-5000` ms (60), `filter=lp|bp|hp`,
-  `cutoff=20-20000` Hz (alone it means a low-pass), `resonance=0-100`, `filterenv=Hz` or
-  `Hz/ms`, `drive=0-100`, `volume=0-200` (100), `echo=0-100` (send to the song's echo),
-  `note=c4` (the pitch of `%` steps).
+- `inst NAME key=value ...` (up to 32): `wave=pulse|saw|tri|sine|noise` (pulse) or the 8-bit
+  console waves `chiptri|chipnoise|chipmetal` (on the two noise waves the pitch picks one of 16
+  colours), `duty=1-99` (50), `unison=0-100` cents, `sub=0-100`, `noise=0-100` or
+  `noise=level/ms`, `attack=0-10000` ms (2), `decay=1-20000` ms (200), `sustain=0-100` (70; 0 =
+  dies away like a drum), `release=0-20000` ms (60), `gate=1-100` % of the written length held
+  (90), `pitch=semis` or `semis/ms` (-48..48; a kick is `pitch=24/25`), `vibrato=cents/Hz/delayms`,
+  `glide=0-5000` ms (60), `filter=lp|bp|hp`, `cutoff=20-20000` Hz (alone it means a low-pass),
+  `resonance=0-100`, `filterenv=Hz` or `Hz/ms`, `drive=0-100`, `volume=0-200` (100),
+  `echo=0-100` (send to the song's echo), `note=c4` (the pitch of `%` steps), `levels=0|2-64`
+  (the envelope moves in that many steps; 16 is an 8-bit console).
 - A track is `NAME: items` (up to 16) and plays the instrument of the same name; `@name` switches.
   All tracks start together; another line with the same name continues the track.
 - Items, separated by spaces: a note `c4`, `f#3`, `bb2` (letter, `#`/`b`, octave digit; the octave
@@ -1147,6 +1186,8 @@ Song text in brief - the docs page *Song text* has the full reference:
 Audio analysis as numbers: playback on speaker boards, or the selected input on the TC002.
 TC002 System > Audio > Music source selects Automatic (playback priority), Playback or Microphone.
 Microphone uses independent 66 ms PCM windows; playback analysis is timed to the speaker.
+Only `draw()` makes the microphone listen: in `loop()`, timers and handlers `music.*` answers
+what it hears for the app on the display, zeros while none listens, so read it in `draw()`.
 For microphone visuals omit a `should_show()` guard on `music.playing()`; it reports playback:
 
 | Call | Answer |
@@ -1172,8 +1213,8 @@ line, `max` 8 matching the fixed 0-8 range of `bar_chart()` with autoscale off:
 `music.pitch()` (TC002) follows Music source like the other readings: Automatic hears the speaker
 while something plays, otherwise the microphone, so a singing game plays nothing while it listens;
 `# @needs microphone` only for a script that needs the microphone. Range 70-1600 Hz; `0.0` outside
-it, for chords, while the voice assistant listens, and on the ESP32 and ESP32-S3. It updates
-about 10 times a second and a reading older than 300 ms answers `0.0`, so call it in `draw()`.
+it, for chords, and on the ESP32 and ESP32-S3. It updates about 10 times a second and a reading
+older than 300 ms answers `0.0`, so call it in `draw()`.
 Note number: `69 + 12 * math.log(hz / 440) / math.log(2)` (`import math`).
 
 ### 5.19 Running without ever being shown
@@ -1217,8 +1258,9 @@ return m
 
 - The import name is the file name, so it must read as an identifier: letters, digits and `_`, not
   starting with a digit. `# @module weather` overrides it when the file is called something else.
-- Never name a module after a built-in one (`json`, `math`, `string`, `modbus`, `ble`, `gamepad`, `global`,
-  `gc`, `strict`, `os`, `sys`, `time`, `debug`, `introspect`, `solidify`) - the install is refused.
+- Never name a module after a built-in one (`json`, `math`, `string`, `modbus`, `ble`, `gamepad`,
+  `layout`, `oauth`, `crypto`, `tcp`, `voice`, `secret`, `global`, `gc`, `strict`, `os`, `sys`, `time`,
+  `debug`, `introspect`, `solidify`) - the install is refused.
 - A module **must end with `return`**, or it installs with an error.
 - Modules may import each other, in any order.
 - Write one only when at least two apps genuinely share the code, or share a `@config` value
@@ -1293,7 +1335,7 @@ your own class resolve at call time, so a method may call another defined furthe
 ## 7. What is NOT available
 
 Importable: `string` · `json` · `math` (including `math.rand()`)
-· `gc` · `strict` · `global` · `modbus`; `ble`, `gamepad`, `crypto`, `oauth` and `tcp` on TC002 only - plus any module the user has installed (5.20). **Everything else
+· `gc` · `strict` · `global` · `modbus`; `ble`, `gamepad`, `layout`, `crypto`, `oauth`, `tcp`, `voice` and `secret` on TC002 only - plus any module the user has installed (5.20). **Everything else
 raises on `import`.** Specifically unavailable, and a frequent source of invented code:
 
 | Not available | Instead |
@@ -1305,6 +1347,8 @@ raises on `import`.** Specifically unavailable, and a frequent source of invente
 | `input()` - exists, but there is no console to type at | nothing; never call it |
 | `delay()` / `sleep()` - **no such thing** | `timer.after()` for delayed actions, `timer.every()` for recurring actions; `now_ms()` / `epoch_ms()` for animation in `draw()` |
 | a blocking HTTP call | `http.get()` with a callback |
+| recording or playing voice on ESP32 and ESP32-S3 | nothing; `voice` is TC002 only |
+| a safe place for a key on ESP32 and ESP32-S3 | nothing; `@secret` and `secret` are TC002 only, and `{secret:key}` goes out as plain text there |
 | a `while true` render loop | `draw()` **is** the loop; paint one frame and return |
 | a variable named like a built-in call (`var text = "21°"`) | another name; the variable hides the call, and the next `text()` fails |
 | `elapsed / 1000 * w` for a share of whole numbers | multiply first: `elapsed * w / 1000`; `/` on two integers drops the remainder, so `500 / 1000` is `0` |
@@ -1325,13 +1369,20 @@ anything that waits, waits by returning and being called again.
 | HTTP response body | 8 KB by default; `cap` raises or lowers it, and `find`+`keep` narrows it to a window (`keep` defaults to 256) | truncated, or filtered |
 | Free memory while the body is collected | brings `cap` down to what is there; running out mid-body drops the response | callback gets `nil` and the real status code |
 | HTTP requests in flight | 8 per app | callback gets `nil` immediately |
-| HTTP timeout | 5 s connect, 5 s read, 30 s total | callback gets `nil` |
+| HTTP requests at a time | 1 for all apps together, on TC002 1 more for those with `timeout`; at most 16 queued on ESP32, 8 per queue on TC002 | a slow one delays the others; a full queue gives `nil` immediately |
+| HTTP timeout | connect: ESP32 5 s, TC002 3 s; read: 5 s; total: 30 s, queue included; `timeout` replaces read and total, 1-60 s on ESP32, 1-120 s on TC002, whole seconds, and leaves 30 s for the queue; after 30 s in the queue a request is not sent; on TC002 a name lookup is not covered | callback gets `nil`, out of range at once |
+| HTTP bodies waiting (TC002) | 4 MB across all apps | callback gets `nil` at once |
 | Pending timers | 8 per app, 32 total; integer delay 25–86400000 ms | `timer.after()` / `timer.every()` return `nil` for invalid arguments or a full queue |
 | MQTT subscriptions | 8 per app | further subscribes ignored |
 | MQTT messages waiting | 32, shared by every script | the oldest is dropped |
 | Chart values | 16 | extras dropped |
 | Music bands | 32 | a smaller `n` merges neighbours |
 | Regex | 256-byte pattern, 7 capturing groups | the call answers `nil` |
+| Voice clips (TC002) | 4 and 4 MB per app; a running recording counts as `max` at 32 KB/s, a running fetch as 2 MB; 4 MB of system memory stay free, and room for a running recording's whole limit | callback gets `voice.FULL` |
+| Voice recording (TC002) | one on the clock, by the app on the panel; `silence` 300-3000 ms (800), `wait` 1-15 s (5), `max` 1-30 s (15) | out of range `voice.BAD`, otherwise `voice.BUSY` |
+| `voice.send`, `voice.fetch` (TC002) | 2 per app, one at a time across all apps, so a long one delays the others; `timeout` 1-120 s (30 and 15), counted from the transfer's turn, with 3 s of it to connect and a name lookup on top; 16 form fields; a fetch 2 MB; fetch bodies waiting 4 MB across all apps; twice body and `cap` must fit above the 4 MB kept free and a running recording's whole limit | a third `voice.BUSY`, out of range or oversized `voice.BAD`, no room `voice.FULL`, no answer in time status `0` |
+| `@secret` (TC002) | 4 lines; key 24 characters, `label` 48, `help` 96, `hosts` required, 1-8; a value 512 bytes without control characters | one bad line: no key of the app works, and saving erases them |
+| `{secret:key}` (TC002) | a filled URL, header value or body is at most 4 KB longer | nothing is sent, callback gets `(nil, 0)` |
 | Frame budget | 25 ms | nothing is dropped; the whole panel's frame rate falls |
 
 Long computations and accidental infinite loops can hit the instruction limit. Split expensive
@@ -1340,9 +1391,9 @@ execute faster. Every script also shares the reported `scriptHeapBudgetBytes`; o
 usable PSRAM this is 96 KiB. A typical device already has several scripts installed. Section 9 is
 how you stay a good neighbour.
 
-Any unhandled error leaves the app **stuck broken**: the panel shows `ERR:<name>` in red and the
-web UI shows the message. Nothing else on the device is affected, and saving the script again
-clears it.
+Any unhandled error leaves the app **stuck broken**: the display shows `ERR:<name>` in red and the
+web UI shows the message and the line it happened on. Nothing else on the device is affected,
+and saving the script again clears it.
 
 ---
 
@@ -1539,8 +1590,8 @@ on the panel.
    hardcoded constant the user would want to edit, no settings screen of your own, no "change line
    14 to…".
 2. Are the `@config` lines in the header above any code, each using one of the six types (`bool`,
-   `text`, `number`, `slider`, `select`, `color`) and only the nine extras (`default`, `help`,
-   `unit`, `group`, `options`, `min`, `max`, `step`, `maxlen`)?
+   `text`, `number`, `slider`, `select`, `color`) and only the ten extras (`default`, `help`,
+   `unit`, `group`, `options`, `min`, `max`, `step`, `maxlen`, `hint`)?
 3. Are there at most 12, and is each read with `store.get(key)` and **no** second argument?
 
 **Structure**
@@ -1552,8 +1603,9 @@ on the panel.
 8. Is every number wrapped in `str()` before being joined to a string?
 9. Is there any `while true`, `delay()`, `sleep()` or blocking call? Remove it.
 10. Is every function you called actually in section 5? Nothing else exists.
-11. Is every `import` one of `string`, `json`, `math`, `gc`, `strict`, `global`, `modbus`, or a module you
-    are also delivering?
+11. Is every `import` one of `string`, `json`, `math`, `gc`, `strict`, `global`, `modbus`, a module you
+    are also delivering, or on a TC002 one of `ble`, `gamepad`, `layout`, `oauth`, `crypto`, `tcp`,
+    `voice`, `secret`?
 
 **Memory (section 9)**
 
@@ -1600,10 +1652,11 @@ Close with these steps, in their language, and nothing longer:
 > 5. To change a setting, go to the **Apps** tab and click the gear button on the row for `<Name>`.
 >    Saving there restarts the app.
 >
-> If the panel shows **`ERR:`** in red, the script hit an error. The message is shown next to the
-> script in the Scripts tab - **copy it back to me and I will fix it.**
+> If the display shows **`ERR:`** in red, the script hit an error. The message and its line are
+> shown next to the script in the Scripts tab - **copy them back to me and I will fix it.**
 
-Leave step 5 out only if the script really has no `@config` line, which should be rare.
+Leave step 5 out only if the script really has no `@config` line, which should be rare. With a
+`# @secret` line, add to it: under **API keys**, paste your key and press **Save**.
 
 If the user reports an error, ask for the exact message from the Scripts tab, fix the cause, and
 return the **complete corrected file** again - never a patch, never "change line 14 to…". They are
@@ -1745,3 +1798,248 @@ partial final lines are discarded. CR before LF is stripped; embedded NUL is an 
 Names resolve in the background; the timeout covers lookup and connect.
 Removing/reloading an app releases sockets. Failed delivery to an inactive app closes
 its connection. Reconnect with a loop deadline and bounded backoff. Never network in draw().
+
+## API keys (`# @secret`, `import secret`)
+
+TC002 only. A key stays out of the script: the script declares it, the user enters it under **Apps**
+→ the gear button → **API keys**, and the clock puts it into the request. The script never sees it.
+Never put a key in `@config`, in `store` or in the source, and never ask for it in chat.
+
+```berry
+# @needs  secret
+# @secret key label="API key" help="Your key from example.com" hosts=api.example.com
+```
+
+- `key` starts with a letter or `_`, then letters, digits and `_`, up to 24 characters. **`hosts` is
+  required**: 1-8 names, IPv4 addresses or IPv6 addresses in brackets, separated by commas, without a
+  port. A line without it is invalid, and no key of the app works. `label` (up to 48) and `help` (up to
+  96) are optional.
+- `# @needs secret` is what warns on other clocks; an `@secret` line alone asks for nothing. The other
+  clocks ignore the line and send `{secret:key}` as plain text.
+- **Write `{secret:key}` in a header value, in the path or query of the URL** (percent-encoded there),
+  **or in a text body** (`http.*`, `voice.fetch` with `body`). In a header
+  and a body the value goes in as it is. It works in `http.*`, `voice.send` and `voice.fetch`. A clip, a
+  form field, a header name and every other module treat it as plain text. The whole body counts, so
+  text passed on from elsewhere that holds `{secret:` is filled in, or refused with an unknown key.
+- `secret.has(key)` after `import secret` answers a bool, `false` for an undeclared or empty key.
+- `secret.allows(key, url)` answers `true` when the key is declared and set and may go to this URL,
+  `false` for anything else. Add the header only when it is `true`, so the same app works with a local
+  service without a key. With one key per service, ask for each key and send the one that fits.
+- **Where a key may go:** only to the hosts `hosts=` lists, and there over `https://`, or over `http://`
+  when the address is written as `10.x`, `172.16.x` to `172.31.x`, `192.168.x`, `127.x`, `169.254.x`,
+  `[::1]`, `fc00::/7`, `fe80::/10` or a name ending in `.local`. Nothing is looked up, so
+  `http://localhost` and `http://nas.fritz.box` do not count.
+- **Refused** (unknown or empty key, any other address): nothing is sent, the callback gets
+  `(nil, 0)`, as without a network. A placeholder in the scheme, host, port or user name makes the URL
+  invalid: `http.*` gets `(nil, 0)`, `voice.send` and `voice.fetch` get `voice.BAD`. After `#` nothing
+  is sent, and the callback gets `(nil, 0)`. Tell the user to check the key and the address.
+- A request with a filled key follows no redirect; the callback gets the redirect's status.
+- A saved key stays until the user removes it or the app is removed. Changing `hosts=`, removing the
+  line, or a mistake in any `@secret` line erases it when the script is saved; a new `label` or `help`
+  keeps it. It is not in a backup. To use a key with another host, the user changes `hosts=` in the code
+  and enters the key again.
+- A key is protected from others on the network, not fully from other apps the user installs, because
+  all scripts run together on the clock. **When the app uses a key or the microphone, tell the user to
+  set a web login** (**System** → **Web server**): without one, any web page opened in a browser on the
+  same network can change scripts and app settings on the clock, and with that reach API keys and the
+  microphone.
+
+## Voice (`import voice`)
+
+TC002 only, `# @needs voice`. Records what someone says, sends it to a service and plays audio. All
+calls return at once and call back later, between frames; a refused call calls back before it
+returns, so set your state first.
+
+A **clip** is audio the clock holds for the app. The callback hands you an object with `ms` (0 for a
+download) and `kind` (`wav` or `mp3`). The script cannot read the sound, only send or play it.
+
+| Call | Does |
+|---|---|
+| `voice.record(opts, cb)` | `cb(clip, status)`, status 200 with a clip. `opts` may be `nil`: `silence` ms, `wait` s, `max` s, `from` (`'trigger'` by default, or `'now'`) |
+| `voice.stop()` | ends the recording; the callback gets what it has |
+| `voice.level()` | 0-255, the loudness of the running recording, otherwise 0 |
+| `voice.state()` | `'idle'`, `'recording'` or `'playing'` |
+| `voice.send(clip, url, opts, cb)` | `cb(body, status)` as in `http` |
+| `voice.fetch(url, opts, cb)` | `cb(clip, status)`, 200 with WAV or MP3 only, and a `Content-Type` of `audio/mpeg`, `audio/mp3`, `audio/wav`, `audio/wave`, `audio/x-wav` or `application/octet-stream`. `opts`: `body`, `method` (`POST` with a body, else `GET`), `headers`, `timeout` (default 15) |
+| `voice.play(clip, done?)` | answers whether it started. `done(heard)` runs after it ended; `false` when stopped or replaced |
+| `voice.cancel()` | ends the app's recording, playback, sends and fetches; their callbacks get `voice.CANCELLED` or `false` |
+
+`voice.send` options: `headers`, `method` (`POST`), `find`, `keep`, `cap` as in `http` (5.7), and
+`timeout` in whole seconds, 1-120, default 30, which also covers the wait for the first byte.
+Connecting has its own 3 s. The clip
+goes as a form: `field` (`file`), `fields` (a map, at most 16), no `Content-Type` of yours; `'as': 'raw'`
+sends it as the whole body. Anything but a clip raises `value_error`.
+
+Status: an HTTP code, `0` when no server answered or a key was refused, or `voice.SILENCE` (-1, nobody
+spoke), `voice.BUSY` (-2, the app is not shown, the assistant is busy, another recording runs, a third
+send or fetch), `voice.CANCELLED` (-3), `voice.FULL` (-4, clip limits or memory), `voice.GONE` (-5, a
+released clip), `voice.BAD` (-6, a bad option, URL, method or header, or a fetch answer 200 of another
+type or that is neither WAV nor MP3).
+
+- **Only the app on the panel can record.** Hiding it stops its recording and playback and deletes
+  its finished clips; sends and fetches go on. It keeps the panel while it records, plays, sends or
+  fetches.
+- While it records or plays, other sounds are refused and music waits. `sound.*` works again in the
+  record and play callbacks. While it sends or fetches on the panel, music waits and
+  `sound.play({'speech': ...})` still plays. A send or fetch of an app in the background leaves the
+  music alone.
+- **The voice assistant:** the user picks an app with `@needs voice` and an `on_assistant` method,
+  neither `@headless` nor `@module`, under **System** → **Voice assistant**. Add `# @ondemand`. The clock opens it, and
+  `on_assistant(trigger)` runs after its first frame with `wake`, `knob`, `mqtt` or `api`. A
+  `voice.record()` there starts at the trigger; a later one starts now. End with `rotation.close()`.
+  A new trigger does nothing while the clock speaks or the app still records, plays, sends or fetches.
+  `http` does not count, so a trigger can arrive during the chat step.
+- **The chat step uses `http.post` with `timeout`.** Without it `http` gives up after 5 s without a
+  first byte, and a chat model often thinks longer. `voice.cancel()` does not end it: keep the id and
+  call `http.cancel(id)`, or the next question waits behind the old one.
+- Most keys for these services go in a header: see *API keys* above. Give each service its own
+  `@secret` line bound to its host and pick the key per URL with `secret.allows(key, url)`. A local
+  service needs no key.
+- A question can overtake an older one, and the old callback still runs: count questions as `turn`
+  does below.
+
+Record, send, chat, fetch and play, for any service with the OpenAI format:
+
+```berry
+# @name    Ask
+# @desc    Ask out loud and hear the answer
+# @version 1.0
+# @ondemand
+# @needs   voice secret
+# @config  stt_url    text "Speech address" default="https://api.openai.com/v1/audio/transcriptions" help="Turns your question into text"
+# @config  stt_model  text "Speech model"   default="gpt-4o-mini-transcribe" help="The model of that service"
+# @config  chat_url   text "Chat address"   default="https://api.openai.com/v1/chat/completions" help="Answers your question"
+# @config  chat_model text "Chat model"     default="gpt-4o-mini" help="The model of that service"
+# @config  tts_url    text "Reply address"  default="https://api.openai.com/v1/audio/speech" help="Reads the answer aloud"
+# @config  tts_model  text "Reply model"    default="gpt-4o-mini-tts" help="The model of that service"
+# @config  tts_voice  text "Voice"          default="alloy" help="The voice of that service"
+# @secret  key label="OpenAI key" help="A local service needs none" hosts=api.openai.com
+
+import json
+import voice
+import secret
+
+class Ask
+  var turn, asking, label, tint, until
+
+  def init()
+    self.turn = 0
+    self.label = "ASK"
+    self.tint = 0xFFFFFF
+    self.until = now_ms() + 10000
+  end
+
+  def on_assistant(trigger)
+    self.listen('trigger')
+  end
+
+  def on_knob(event)
+    if event != 'press' return false end
+    self.listen('now')
+    return true
+  end
+
+  def on_hide()
+    self.drop_question()
+  end
+
+  def drop_question()
+    self.turn += 1
+    voice.cancel()
+    http.cancel(self.asking)
+  end
+
+  def loop()
+    if self.until > 0 && now_ms() >= self.until rotation.close() end
+  end
+
+  def headers(url, typed)
+    var out = typed ? {'Content-Type': 'application/json'} : {}
+    if secret.allows('key', url) out['Authorization'] = 'Bearer {secret:key}' end
+    return out
+  end
+
+  def listen(from)
+    self.drop_question()
+    var turn = self.turn
+    self.show("LISTEN", 0x00AAFF, 0)
+    voice.record({'from': from}, / clip, code -> self.heard(turn, clip, code))
+  end
+
+  def heard(turn, clip, status)
+    if turn != self.turn return end
+    if clip == nil return self.fail(status) end
+    self.show("...", 0xFFFFFF, 0)
+    var url = store.get('stt_url')
+    var opts = {'fields': {'model': store.get('stt_model')}, 'headers': self.headers(url, false)}
+    voice.send(clip, url, opts, / body, code -> self.transcribed(turn, body, code))
+  end
+
+  def transcribed(turn, body, status)
+    if turn != self.turn return end
+    if status != 200 return self.fail(status) end
+    var data = body != nil ? json.load(body) : nil
+    var question = isinstance(data, map) ? data.find('text') : nil
+    if question == nil || question == '' return self.fail(voice.SILENCE) end
+    var request = {'model': store.get('chat_model'), 'messages': [{'role': 'user', 'content': question}]}
+    var url = store.get('chat_url')
+    var opts = {'cap': 16384, 'timeout': 120, 'headers': self.headers(url, true)}
+    self.asking = http.post(url, json.dump(request), / answer, code -> self.answered(turn, answer, code), opts)
+  end
+
+  def answered(turn, answer, status)
+    if turn != self.turn return end
+    if status != 200 return self.fail(status) end
+    var reply = nil
+    try
+      reply = json.load(answer)['choices'][0]['message']['content']
+    except ..
+    end
+    if reply == nil return self.fail(200) end
+    self.show(reply, 0xFFFFFF, 0)
+    var request = {'model': store.get('tts_model'), 'voice': store.get('tts_voice'), 'input': reply,
+                   'response_format': 'mp3'}
+    var url = store.get('tts_url')
+    var opts = {'body': json.dump(request), 'timeout': 60, 'headers': self.headers(url, true)}
+    voice.fetch(url, opts, / clip, code -> self.fetched(turn, clip, code))
+  end
+
+  def fetched(turn, clip, status)
+    if turn != self.turn return end
+    if clip == nil return self.fail(status) end
+    if !voice.play(clip, / ok -> self.finished(turn)) self.finished(turn) end
+  end
+
+  def finished(turn)
+    if turn == self.turn self.until = now_ms() + 10000 end
+  end
+
+  def fail(status)
+    var words = "ERROR " + str(status)
+    if status == voice.SILENCE
+      words = "NOTHING HEARD"
+    elif status == 0
+      words = "NO NETWORK"
+    elif status == 200
+      words = "EMPTY ANSWER"
+    elif (status == 401 || status == 403) && !secret.has('key')
+      words = "KEY MISSING"
+    end
+    self.show(words, 0xFF3020, now_ms() + 5000)
+  end
+
+  def show(words, tint, until)
+    self.label = words
+    self.tint = tint
+    self.until = until
+  end
+
+  def draw()
+    clear()
+    scroll_text(self.label, self.tint)
+    rect_fill(0, height() - 1, width() * voice.level() / 255, 1, 0x00AAFF)
+  end
+end
+
+return Ask()
+```

@@ -3,9 +3,12 @@
 #include "system/MonotonicClock.h"
 #include "platform_log/Output.h"
 
+#include <algorithm>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <ctime>
+#include <mutex>
 
 #include "core/api/JsonStream.h"
 
@@ -14,60 +17,128 @@ namespace awtrix {
 namespace {
 
 // The ring is statically sized and never allocates: logging has to keep working when the heap is
-// exhausted, which is exactly when the log matters. 34 x 120 bytes is the budget it gets.
+// exhausted, which is exactly when the log matters. Lines are stored at their real length, one
+// length byte and the text. That is 34 lines of 80 characters, a little over the average measured
+// on a clock, and 22 at the longest. A line is cut at kLineMax including its terminator.
 constexpr size_t kLineMax = 120;
-constexpr size_t kLineSlots = 34;
+constexpr size_t kRingBytes = 34 * (80 + 1);
 
-struct Slot {
-  uint32_t seq;
-  char text[kLineMax];
+uint8_t g_ring[kRingBytes];
+size_t g_oldest = 0;      // Where the oldest line's length byte is.
+size_t g_used = 0;
+uint32_t g_oldestSeq = 1;
+uint32_t g_seq = 0;       // The newest line's number. Lines between the two are consecutive.
+// Any task may log, and one torn length byte would garble the whole ring. On the ESP32 the first
+// lock allocates the mutex; the boot log gets there long before the heap can run out.
+// A toolchain without threads (arm-none-eabi newlib, the RP2040 build) has no std::mutex. There
+// every line is logged from the one main loop, so nothing can tear the ring.
+#if defined(__GLIBCXX__) && !defined(_GLIBCXX_HAS_GTHREADS)
+struct RingLock {
+  void lock() {}
+  void unlock() {}
 };
-
-Slot g_slots[kLineSlots];
-size_t g_head = 0;
-size_t g_count = 0;
-uint32_t g_seq = 0;
+#else
+using RingLock = std::mutex;
+#endif
+RingLock g_ringLock;
 bool g_verbose = false;
 
-void writeLine(const char* msg) {
-  Slot& slot = g_slots[(g_head + g_count) % kLineSlots];
-  if (g_count < kLineSlots)
-    ++g_count;
-  else
-    g_head = (g_head + 1) % kLineSlots;
-  char* line = slot.text;
+size_t wrapped(size_t offset) { return offset < kRingBytes ? offset : offset - kRingBytes; }
+
+size_t afterLine(size_t lengthAt) { return wrapped(lengthAt + 1 + g_ring[lengthAt]); }
+
+void store(const char* line, size_t length) {
+  std::lock_guard<RingLock> lock(g_ringLock);
+  while (kRingBytes - g_used < length + 1) {
+    g_used -= 1 + g_ring[g_oldest];
+    g_oldest = afterLine(g_oldest);
+    ++g_oldestSeq;
+  }
+  const size_t lengthAt = wrapped(g_oldest + g_used);
+  g_ring[lengthAt] = static_cast<uint8_t>(length);
+  const size_t textAt = wrapped(lengthAt + 1);
+  const size_t untilEnd = std::min(length, kRingBytes - textAt);
+  std::memcpy(g_ring + textAt, line, untilEnd);
+  std::memcpy(g_ring, line + untilEnd, length - untilEnd);
+  g_used += 1 + length;
+  ++g_seq;
+}
+
+void load(size_t lengthAt, char* line) {
+  const size_t length = g_ring[lengthAt];
+  const size_t textAt = wrapped(lengthAt + 1);
+  const size_t untilEnd = std::min(length, kRingBytes - textAt);
+  std::memcpy(line, g_ring + textAt, untilEnd);
+  std::memcpy(line + untilEnd, g_ring, length - untilEnd);
+  line[length] = '\0';
+}
+
+// The log's reply is JSON, which has to be valid UTF-8 for a strict parser, and a line holds whatever
+// a script or a server sent. A character the line ends inside of goes, which is also what the cut
+// leaves. Any other byte that is not part of a character becomes one '?'.
+void keepUtf8(char* text) {
+  auto* at = reinterpret_cast<uint8_t*>(text);
+  while (*at) {
+    const uint8_t lead = *at;
+    if (lead < 0x80) {
+      ++at;
+      continue;
+    }
+    const int size = lead < 0xE0 ? 2 : lead < 0xF0 ? 3 : 4;
+    bool whole = lead >= 0xC2 && lead <= 0xF4;
+    // The second byte's range is what rules out overlong forms, surrogates and U+110000 upwards.
+    uint8_t low = lead == 0xE0 ? 0xA0 : lead == 0xF0 ? 0x90 : 0x80;
+    uint8_t high = lead == 0xED ? 0x9F : lead == 0xF4 ? 0x8F : 0xBF;
+    for (int i = 1; whole && i < size; ++i) {
+      if (!at[i]) {
+        *at = 0;
+        return;
+      }
+      whole = at[i] >= low && at[i] <= high;
+      low = 0x80;
+      high = 0xBF;
+    }
+    if (whole) {
+      at += size;
+    } else {
+      *at++ = '?';
+    }
+  }
+}
+
+void writeLine(const char* fmt, va_list ap) {
+  char line[kLineMax];
+  int stamp;
   time_t now = time(nullptr);
   // Before NTP lands the wall clock is meaningless, so stamp early lines with uptime instead.
   if (now > 1600000000) {
     struct tm tmv;
     localtime_r(&now, &tmv);
-    snprintf(line, kLineMax, "%02d:%02d:%02d %s", tmv.tm_hour, tmv.tm_min, tmv.tm_sec, msg);
+    stamp = snprintf(line, kLineMax, "%02d:%02d:%02d ", tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
   } else {
-    snprintf(line, kLineMax, "[%6lus] %s", static_cast<unsigned long>(monotonicMs() / 1000), msg);
+    stamp = snprintf(line, kLineMax, "[%6lus] ", static_cast<unsigned long>(monotonicMs() / 1000));
   }
-  slot.seq = ++g_seq;
+  vsnprintf(line + stamp, kLineMax - stamp, fmt, ap);
+  keepUtf8(line + stamp);
+  store(line, std::strlen(line));
   writeLogLine(line);
 }
 
 }
 
 void logf(const char* fmt, ...) {
-  char msg[kLineMax];
   va_list ap;
   va_start(ap, fmt);
-  vsnprintf(msg, sizeof(msg), fmt, ap);
+  writeLine(fmt, ap);
   va_end(ap);
-  writeLine(msg);
 }
 
 void logdbg(const char* fmt, ...) {
   if (!g_verbose) return;
-  char msg[kLineMax];
   va_list ap;
   va_start(ap, fmt);
-  vsnprintf(msg, sizeof(msg), fmt, ap);
+  writeLine(fmt, ap);
   va_end(ap);
-  writeLine(msg);
 }
 
 namespace logbuf {
@@ -76,18 +147,39 @@ void setVerbose(bool on) { g_verbose = on; }
 bool verbose() { return g_verbose; }
 
 // Writes the lines newer than the caller's last sequence number plus the next one to ask for, so
-// the web UI can poll for a tail without re-reading the whole ring.
+// the web UI can poll for a tail without re-reading the whole ring. The reply can be slower than the
+// logging, so the lock is only held to copy a line out, and lines overwritten meanwhile are skipped.
 void streamJsonAfter(uint32_t after, api::JsonStream& out) {
+  uint32_t seq;
+  uint32_t newest;
+  size_t at;
+  {
+    std::lock_guard<RingLock> lock(g_ringLock);
+    newest = g_seq;
+    seq = g_oldestSeq;
+    at = g_oldest;
+    for (; seq <= after && seq <= newest; ++seq) at = afterLine(at);
+  }
   out.put("{\"next\":");
-  out.putUnsigned(g_seq);
+  out.putUnsigned(newest);
   out.put(",\"lines\":[");
   bool first = true;
-  for (size_t i = 0; i < g_count; ++i) {
-    const Slot& e = g_slots[(g_head + i) % kLineSlots];
-    if (e.seq <= after) continue;
+  char line[kLineMax];
+  while (seq <= newest) {
+    {
+      std::lock_guard<RingLock> lock(g_ringLock);
+      if (seq < g_oldestSeq) {
+        seq = g_oldestSeq;
+        at = g_oldest;
+        if (seq > newest) break;
+      }
+      load(at, line);
+      at = afterLine(at);
+    }
+    ++seq;
     if (!first) out.put(',');
     first = false;
-    out.putString(e.text, api::JsonStream::Escape::LogLine);
+    out.putString(line, api::JsonStream::Escape::LogLine);
   }
   out.put("]}");
   out.flush();

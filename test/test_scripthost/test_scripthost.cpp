@@ -3,6 +3,7 @@
 
 #include "berry.h"
 
+#include <algorithm>
 #include <cstring>
 #include <map>
 #include <set>
@@ -110,14 +111,20 @@ struct FakeHttp : script::IScriptHttp {
   std::vector<uint32_t> ids;
   std::vector<std::string> urls;
   std::vector<std::string> methods;
+  std::vector<std::string> bodies;
+  std::vector<uint32_t> timeouts;
+  std::vector<uint32_t> cancelled;
   bool accept = true;
   bool request(const script::HttpRequest& req) override {
     if (!accept) return false;
     ids.push_back(req.id);
     urls.push_back(req.url);
     methods.push_back(req.method);
+    bodies.push_back(req.body);
+    timeouts.push_back(req.timeoutSec);
     return true;
   }
+  void cancel(uint32_t id) override { cancelled.push_back(id); }
   uint32_t last() const { return ids.empty() ? 0 : ids.back(); }
 };
 
@@ -718,6 +725,52 @@ static void test_an_extension_adds_a_module_and_hears_about_its_apps() {
   TEST_ASSERT_EQUAL_STRING("S", echo.forgotten[0].c_str());
 }
 
+// A runtime error inside a module function is reported at the app's line that called it: that
+// is the line the author of the app can see and fix. A module that fails while it loads names its
+// own line.
+static void test_a_runtime_error_names_the_line_of_the_failing_script() {
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  TEST_ASSERT_TRUE(host.set("tools", "# @module\n"
+                                     "var m = module(\"tools\")\n"
+                                     "m.pick = def (l, i)\n"
+                                     "  return l[i]\n"
+                                     "end\n"
+                                     "return m\n"));
+  TEST_ASSERT_TRUE(host.errorOf("tools").empty());
+  TEST_ASSERT_TRUE(host.set("A", "import tools\n"
+                                 "\n"
+                                 "class App\n"
+                                 "  def setup()\n"
+                                 "\n"
+                                 "    tools.pick([1], 5)\n"
+                                 "  end\n"
+                                 "  def draw() end\n"
+                                 "end\n"
+                                 "return App()"));
+  const script::ScriptError app = host.errorOf("A");
+  TEST_ASSERT_EQUAL_INT(6, app.line);
+  TEST_ASSERT_EQUAL_STRING("index_error: list index out of range", app.message.c_str());
+
+  host.set("broken", "# @module\nvar l = []\nvar x = l[3]\nreturn 1\n");
+  const script::ScriptError mod = host.errorOf("broken");
+  TEST_ASSERT_EQUAL_INT(3, mod.line);
+  TEST_ASSERT_EQUAL_STRING("index_error: list index out of range", mod.message.c_str());
+
+  // compile() reports its own line, not the loop before it that ended with a caught raise.
+  TEST_ASSERT_TRUE(host.set("C", "class App\n"
+                                 "  def setup()\n"
+                                 "    for x : [1, 2]\n"
+                                 "    end\n"
+                                 "\n"
+                                 "    compile(\"1 +\")\n"
+                                 "  end\n"
+                                 "  def draw() end\n"
+                                 "end\n"
+                                 "return App()"));
+  TEST_ASSERT_EQUAL_INT(6, host.errorOf("C").line);
+}
+
 static void test_extensions_follow_hidden_hold_and_removal_lifecycles() {
   EchoExtension echo;
   echo.callbacks = false;
@@ -1138,6 +1191,147 @@ static void test_answered_http_request_is_not_swept() {
   TEST_ASSERT_EQUAL_STRING("33", check(reg, "W").c_str());
 }
 
+static void test_http_budget_leaves_the_queue_its_time() {
+  TEST_ASSERT_TRUE(script::httpBudgetMs(0, 0) == script::kHttpTimeoutMs);
+  TEST_ASSERT_TRUE(script::httpBudgetMs(0, script::kHttpTimeoutMs - 1000) == 1000);
+  TEST_ASSERT_TRUE(script::httpBudgetMs(0, script::kHttpTimeoutMs) == 0);
+  TEST_ASSERT_TRUE(script::httpBudgetMs(60, script::kHttpTimeoutMs - 1) == 60000);
+  TEST_ASSERT_TRUE(script::httpBudgetMs(60, script::kHttpTimeoutMs) == 0);
+}
+
+static void test_http_timeout_extends_the_wait() {
+  FakeHttp fake;
+  g_svc.http = &fake;
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("W", app("var t\ndef init() self.t = 'open' end\n"
+                    "def setup() http.get('http://x/', def(b, s) self.t = str(s) end, {'timeout': 40}) end\n"
+                    "def draw() end\n"
+                    "def check() return self.t end"));
+  TEST_ASSERT_EQUAL_UINT32(40, fake.timeouts.back());
+  RenderCtx ctx;
+  g_now = script::kHttpTimeoutMs + 40000 - 1;
+  host.tick(ctx, "W");
+  TEST_ASSERT_EQUAL_STRING("open", check(reg, "W").c_str());
+  g_now = script::kHttpTimeoutMs + 40000 + 1;
+  host.tick(ctx, "W");
+  TEST_ASSERT_EQUAL_STRING("0", check(reg, "W").c_str());
+}
+
+static void test_http_timeout_must_be_a_positive_whole_number() {
+  FakeHttp fake;
+  g_svc.http = &fake;
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("W", app("var t\ndef init() self.t = '' end\n"
+                    "def setup()\n"
+                    "  for bad : [0, -1, 0.5, 1.5, '60', {}, true]\n"
+                    "    http.get('http://x/', def(b, s) self.t += str(s) end, {'timeout': bad})\n"
+                    "  end\n"
+                    "end\n"
+                    "def draw() end\n"
+                    "def check() return self.t end"));
+  TEST_ASSERT_EQUAL_STRING("0000000", check(reg, "W").c_str());
+  TEST_ASSERT_TRUE(fake.ids.empty());
+}
+
+static void test_http_cancel_ends_a_request_at_once() {
+  FakeHttp fake;
+  g_svc.http = &fake;
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("W", app("var t, id\ndef init() self.t = 'open' end\n"
+                    "def setup() self.id = http.get('http://x/', def(b, s) self.t = str(b) .. ' ' .. str(s) end) end\n"
+                    "def on_button(b)\n"
+                    "  var first = http.cancel(self.id)\n"
+                    "  self.t = self.t .. ' ' .. str(first) .. ' ' .. str(http.cancel(self.id)) .. ' ' .. str(http.cancel(nil))\n"
+                    "end\n"
+                    "def draw() end\n"
+                    "def check() return self.t end"));
+  const uint32_t id = fake.last();
+  RenderCtx ctx;
+  host.tick(ctx, "W");
+  host.handleButton("W", "select");
+  TEST_ASSERT_EQUAL_STRING("nil 0 true false false", check(reg, "W").c_str());
+  TEST_ASSERT_EQUAL_UINT(1, fake.cancelled.size());
+  TEST_ASSERT_EQUAL_UINT32(id, fake.cancelled[0]);
+
+  host.pushHttpResult({id, true, 200, "late"});
+  host.tick(ctx, "W");
+  TEST_ASSERT_EQUAL_STRING("nil 0 true false false", check(reg, "W").c_str());
+}
+
+static void test_http_cancel_is_for_the_owner_only() {
+  FakeHttp fake;
+  g_svc.http = &fake;
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("A", app("var t\ndef init() self.t = 'open' end\n"
+                    "def setup() http.get('http://x/', def(b, s) self.t = 'ended' end) end\n"
+                    "def draw() end\n"
+                    "def check() return self.t end"));
+  const std::string id = std::to_string(fake.last());
+  host.set("B", app("var t\ndef init() self.t = '' end\n"
+                    "def on_button(b)\n"
+                    "  self.t = str(http.cancel(" + id + "))\n"
+                    "  _native_http_cancel(" + id + ")\n"
+                    "end\n"
+                    "def draw() end\n"
+                    "def check() return self.t end"));
+  RenderCtx ctx;
+  host.tick(ctx, "B");
+  host.handleButton("B", "select");
+  TEST_ASSERT_EQUAL_STRING("false", check(reg, "B").c_str());
+  TEST_ASSERT_EQUAL_STRING("open", check(reg, "A").c_str());
+  TEST_ASSERT_TRUE(fake.cancelled.empty());
+}
+
+static void test_http_requests_end_with_their_script() {
+  FakeHttp fake;
+  g_svc.http = &fake;
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("W", app("def setup() http.get('http://x/', def(b, s) end) end\n"
+                    "def draw() end\n"
+                    "def check() return '' end"));
+  const uint32_t id = fake.last();
+  host.remove("W");
+  TEST_ASSERT_EQUAL_UINT(1, fake.cancelled.size());
+  TEST_ASSERT_EQUAL_UINT32(id, fake.cancelled[0]);
+}
+
+static void test_http_body_keeps_every_byte() {
+  FakeHttp fake;
+  g_svc.http = &fake;
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("W", app("def setup()\n"
+                    "  import json\n"
+                    "  http.post('http://x/', json.load('\"a\\\\u0000b\"'), def(b, s) end)\n"
+                    "end\n"
+                    "def draw() end\n"
+                    "def check() return '' end"));
+  TEST_ASSERT_TRUE(fake.bodies.back() == std::string("a\0b", 3));
+}
+
+static void test_only_a_request_with_a_timeout_is_a_slow_answer() {
+  FakeHttp fake;
+  g_svc.http = &fake;
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.set("Plain", app("def setup() http.get('http://x/', def(b, s) end) end\n"
+                        "def draw() end\n"
+                        "def check() return '' end"));
+  TEST_ASSERT_FALSE(host.awaitsSlowAnswer("Plain"));
+  host.set("Slow", app("def setup() http.get('http://x/', def(b, s) end, {'timeout': 40}) end\n"
+                       "def draw() end\n"
+                       "def check() return '' end"));
+  TEST_ASSERT_TRUE(host.awaitsSlowAnswer("Slow"));
+  host.pushHttpResult({fake.last(), true, 200, ""});
+  RenderCtx ctx;
+  host.tick(ctx, "Slow");
+  TEST_ASSERT_FALSE(host.awaitsSlowAnswer("Slow"));
+}
 
 static void test_mqtt_fans_out_to_every_subscriber() {
   FakeMqtt fake;
@@ -2908,8 +3102,160 @@ static void test_a_refused_replacement_keeps_the_dormant_error_and_metadata() {
   TEST_ASSERT_TRUE(host.list().empty());
 }
 
+namespace {
+
+struct ForgetCounter : script::ScriptExtensionLifecycle {
+  std::vector<std::string> forgotten;
+  bool reserves(const std::string&) const override { return false; }
+  void tick(const RenderCtx*) override {}
+  void forget(const std::string& app) override { forgotten.push_back(app); }
+  void hidden(const std::string&) override {}
+  void beginFrame(const std::string&) override {}
+  bool holds(const std::string&) const override { return false; }
+};
+
+}
+
+static const char* kMarksSetup =
+    "var n\ndef init() self.n = 0 end\n"
+    "def setup() shared.set('ran', 1) end\n"
+    "def loop() self.n += 1 end\ndef draw() end\n"
+    "def check() return str(self.n) end";
+
+static void test_a_switched_off_script_is_only_compiled() {
+  AppRegistry reg;
+  std::vector<std::string> installed;
+  script::ScriptHost host(reg, g_svc, [&](const std::string& n) { installed.push_back(n); }, nullptr);
+  host.setSwitchedOff([](const std::string& n) { return n == "A" || n == "B"; });
+
+  TEST_ASSERT_TRUE(host.set("A", app(kMarksSetup)));
+  TEST_ASSERT_NULL(reg.find("A"));
+  TEST_ASSERT_TRUE(host.has("A"));
+  TEST_ASSERT_TRUE(host.isParked("A"));
+  TEST_ASSERT_FALSE(host.isLoaded("A"));
+  TEST_ASSERT_TRUE(host.sharedSnapshot().empty());
+  TEST_ASSERT_FALSE(host.list().at("A").loaded);
+  TEST_ASSERT_EQUAL_UINT(1u, (unsigned)installed.size());
+
+  TEST_ASSERT_TRUE(host.set("B", "class App def draw( end\nreturn App()"));
+  TEST_ASSERT_FALSE(host.errorOf("B").empty());
+  TEST_ASSERT_FALSE(host.list().at("B").error.empty());
+
+  host.remove("A");
+  TEST_ASSERT_FALSE(host.has("A"));
+}
+
+static void test_switching_a_script_off_stops_it_and_on_starts_it_fresh() {
+  const std::string source = app(kMarksSetup);
+  g_svc.readSource = [&](const std::string& n, std::string& out) {
+    if (n != "A") return false;
+    out = source;
+    return true;
+  };
+  ForgetCounter extensions;
+  AppRegistry reg;
+  std::set<std::string> off;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.setExtensionLifecycle(&extensions);
+  host.setSwitchedOff([&](const std::string& n) { return off.count(n) != 0; });
+  host.set("A", source);
+  host.setRunningScripts({"A"});
+  RenderCtx ctx;
+  g_now = 1000;
+  host.tick(ctx, "A");
+  TEST_ASSERT_EQUAL_STRING("1", check(reg, "A").c_str());
+  TEST_ASSERT_EQUAL_UINT(1u, (unsigned)host.sharedSnapshot().size());
+
+  off.insert("A");
+  host.setRunningScripts({});
+  TEST_ASSERT_NOT_NULL(reg.find("A"));
+  g_now = 2000;
+  host.tick(ctx, "Time");
+  TEST_ASSERT_NULL(reg.find("A"));
+  TEST_ASSERT_TRUE(host.has("A"));
+  TEST_ASSERT_TRUE(host.isParked("A"));
+  TEST_ASSERT_TRUE(host.sharedSnapshot().empty());
+  TEST_ASSERT_TRUE(std::find(extensions.forgotten.begin(), extensions.forgotten.end(), "A") !=
+                   extensions.forgotten.end());
+
+  off.clear();
+  host.setRunningScripts({"A"});
+  g_now = 3000;
+  host.tick(ctx, "A");
+  TEST_ASSERT_NOT_NULL(reg.find("A"));
+  TEST_ASSERT_FALSE(host.isParked("A"));
+  TEST_ASSERT_EQUAL_STRING("1", check(reg, "A").c_str());
+  TEST_ASSERT_EQUAL_UINT(1u, (unsigned)host.sharedSnapshot().size());
+}
+
+static void test_a_script_that_cannot_start_shows_why_and_is_tried_again() {
+  const std::string source = app(kMarksSetup);
+  bool readable = false;
+  g_svc.readSource = [&](const std::string& n, std::string& out) {
+    if (n != "A" || !readable) return false;
+    out = source;
+    return true;
+  };
+  AppRegistry reg;
+  std::vector<std::string> installed;
+  std::set<std::string> off{"A"};
+  script::ScriptHost host(reg, g_svc, [&](const std::string& n) { installed.push_back(n); }, nullptr);
+  host.setSwitchedOff([&](const std::string& n) { return off.count(n) != 0; });
+  host.set("A", source);
+  installed.clear();
+
+  off.clear();
+  host.setRunningScripts({"A"});
+  RenderCtx ctx;
+  g_now = 1000;
+  host.tick(ctx, "Time");
+  TEST_ASSERT_TRUE(host.isParked("A"));
+  TEST_ASSERT_NULL(reg.find("A"));
+  TEST_ASSERT_FALSE(host.list().at("A").error.empty());
+  TEST_ASSERT_TRUE(installed.empty());
+
+  readable = true;
+  g_now = 5000;
+  host.tick(ctx, "Time");
+  TEST_ASSERT_TRUE_MESSAGE(host.isParked("A"), "the next try waits for its time");
+  g_now = 11000;
+  host.tick(ctx, "Time");
+  TEST_ASSERT_NOT_NULL(reg.find("A"));
+  TEST_ASSERT_TRUE(host.list().at("A").error.empty());
+  TEST_ASSERT_EQUAL_UINT(1u, (unsigned)installed.size());
+}
+
+static void test_saving_a_switched_off_script_keeps_it_stopped() {
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  bool off = false;
+  host.setSwitchedOff([&](const std::string&) { return off; });
+  host.set("A", app(kMarksSetup));
+  TEST_ASSERT_NOT_NULL(reg.find("A"));
+
+  off = true;
+  TEST_ASSERT_TRUE(host.set("A", app(kMarksSetup)));
+  TEST_ASSERT_NULL(reg.find("A"));
+  TEST_ASSERT_TRUE(host.isParked("A"));
+  TEST_ASSERT_TRUE(host.sharedSnapshot().empty());
+}
+
+static void test_a_switched_off_ondemand_script_is_left_alone() {
+  AppRegistry reg;
+  script::ScriptHost host(reg, g_svc, nullptr, nullptr);
+  host.setSwitchedOff([](const std::string&) { return true; });
+  TEST_ASSERT_TRUE(host.set("G", "# @ondemand\n" + app(kMarksSetup)));
+  TEST_ASSERT_TRUE(host.isOnDemand("G"));
+  TEST_ASSERT_FALSE(host.isParked("G"));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_a_switched_off_script_is_only_compiled);
+  RUN_TEST(test_switching_a_script_off_stops_it_and_on_starts_it_fresh);
+  RUN_TEST(test_saving_a_switched_off_script_keeps_it_stopped);
+  RUN_TEST(test_a_script_that_cannot_start_shows_why_and_is_tried_again);
+  RUN_TEST(test_a_switched_off_ondemand_script_is_left_alone);
   RUN_TEST(test_an_ondemand_script_installs_without_an_instance);
   RUN_TEST(test_a_dormant_script_still_reports_a_syntax_error);
   RUN_TEST(test_launch_starts_fresh_and_unload_lets_the_game_save);
@@ -2952,6 +3298,7 @@ int main(int, char**) {
   RUN_TEST(test_an_answer_missed_while_inactive_fails_once_the_script_runs_again);
   RUN_TEST(test_a_request_timing_out_while_inactive_fails_once_the_script_runs_again);
   RUN_TEST(test_an_extension_adds_a_module_and_hears_about_its_apps);
+  RUN_TEST(test_a_runtime_error_names_the_line_of_the_failing_script);
   RUN_TEST(test_extensions_follow_hidden_hold_and_removal_lifecycles);
   RUN_TEST(test_extensions_deliver_only_registered_hooks_to_visible_running_apps);
   RUN_TEST(test_extension_hooks_share_the_script_instruction_budget);
@@ -2973,6 +3320,14 @@ int main(int, char**) {
   RUN_TEST(test_mqtt_publish_reaches_transport);
   RUN_TEST(test_unanswered_http_requests_free_their_slots);
   RUN_TEST(test_answered_http_request_is_not_swept);
+  RUN_TEST(test_http_budget_leaves_the_queue_its_time);
+  RUN_TEST(test_http_timeout_extends_the_wait);
+  RUN_TEST(test_http_timeout_must_be_a_positive_whole_number);
+  RUN_TEST(test_http_cancel_ends_a_request_at_once);
+  RUN_TEST(test_http_cancel_is_for_the_owner_only);
+  RUN_TEST(test_http_requests_end_with_their_script);
+  RUN_TEST(test_http_body_keeps_every_byte);
+  RUN_TEST(test_only_a_request_with_a_timeout_is_a_slow_answer);
   RUN_TEST(test_remove_drops_subscriptions);
   RUN_TEST(test_replace_releases_slots_and_broker_subscriptions);
   RUN_TEST(test_broken_script_does_not_receive_http_results);

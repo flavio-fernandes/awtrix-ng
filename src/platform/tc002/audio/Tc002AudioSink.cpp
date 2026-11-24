@@ -8,6 +8,7 @@
 #include <algorithm>
 
 #include "platform/linux/LinuxMemory.h"
+#include "platform/posix/StartThread.h"
 #include "platform/tc002/audio/Tc002AudioStream.h"
 #include "platform/tc002/contract/AudioProtocol.h"
 #include "platform/tc002/speech/SpeechSource.h"
@@ -29,11 +30,7 @@ Tc002AudioSink::Tc002AudioSink(CoreEngine& engine, int helperFd, std::shared_ptr
     available_.store(false);
     return;
   }
-  try {
-    thread_ = std::thread([this] { run(); });
-  } catch (...) {
-    available_.store(false);
-  }
+  if (!posix::startThread(thread_, [this] { run(); })) available_.store(false);
 }
 
 Tc002AudioSink::~Tc002AudioSink() {
@@ -156,8 +153,10 @@ void Tc002AudioSink::run() {
     pollfd fds[2] = {{wake_[0], POLLIN, 0}, {link_.fd(), POLLIN, 0}};
     if (link_.wantsWrite()) fds[1].events |= POLLOUT;
     const nfds_t count = link_.failed() ? 1 : 2;
-    const int timeout = again_ ? 0 : available_.load() ? player_.waitMs() : -1;
+    int timeout = again_ ? 0 : available_.load() ? player_.waitMs() : -1;
     again_ = false;
+    const int64_t clipsGoInMs = effectCache_.keep(monotonicMs(), mixer_ != nullptr);
+    if (clipsGoInMs >= 0 && (timeout < 0 || clipsGoInMs < timeout)) timeout = static_cast<int>(clipsGoInMs);
     ::poll(fds, count, timeout);
     char drain[64];
     while (::read(wake_[0], drain, sizeof drain) > 0) {
@@ -167,7 +166,7 @@ void Tc002AudioSink::run() {
     if (available_.load()) reconcile(now);
     player_.pump(now);
     afterPump();
-    voiceQuiet_.store(voiceOwned_.load() && playing_ == Playing::None &&
+    voiceQuiet_.store(voiceChannelClaimed_.load() && playing_ == Playing::None &&
       link_.status().state == TC002_AUDIO_IDLE && (!link_.generation() || link_.finished(link_.generation())));
   }
   player_.stop();

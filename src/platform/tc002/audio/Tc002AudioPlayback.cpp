@@ -40,6 +40,7 @@ class SkippingSource final : public PcmSource {
 // Called with the sequence number of a one-shot that ended, failed or took over; a system sound
 // requested before it and not yet audible will never start.
 void Tc002AudioSink::systemGone(uint32_t seq) {
+  std::lock_guard<std::mutex> lock(mutex_);
   if (static_cast<int32_t>(seq - systemSeq_.load()) < 0) return;
   SystemStart pending = SystemStart::Pending;
   systemStart_.compare_exchange_strong(pending, SystemStart::Failed);
@@ -51,6 +52,7 @@ void Tc002AudioSink::finishOneShot(uint32_t seq) {
   if (request_.oneShotSeq != seq) return;
   request_.oneShot = Kind::None;
   request_.speech.reset();
+  request_.speechVoice.reset();
 }
 
 // The one-shot in the mixer was heard to its end, was replaced, or went with the mixer.
@@ -63,7 +65,7 @@ void Tc002AudioSink::oneShotEnded() {
 
 std::unique_ptr<PcmSource> Tc002AudioSink::openOneShot(const Request& request) {
   if (request.oneShot == Kind::Speech) {
-    std::unique_ptr<PcmSource> source = speech::SpeechSource::open(voice_, request.speech);
+    std::unique_ptr<PcmSource> source = speech::SpeechSource::open(request.speechVoice, request.speech);
     if (!source) logf("speech: no thread for the voice");
     return source;
   }
@@ -153,6 +155,7 @@ void Tc002AudioSink::afterPump() {
       request_.oneShot = Kind::None;
       request_.clip.reset();
       request_.speech.reset();
+      request_.speechVoice.reset();
       request_.effects.clear();
       request_.loop.clear();
       effectsPending_ = 0;

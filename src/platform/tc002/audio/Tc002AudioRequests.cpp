@@ -17,7 +17,7 @@ constexpr std::size_t kMaxMelodyFile = 4096;
 }
 
 bool Tc002AudioSink::playRtttl(const std::string& rtttl, sound::Group group) {
-  if (!available() || voiceOwned_.load()) return false;
+  if (!available() || voiceChannelClaimed_.load()) return false;
   rtttl::Parse parsed = rtttl::parse(rtttl);
   if (!parsed.ok || parsed.notes.empty()) return false;
   urls_.stop(false);
@@ -42,13 +42,13 @@ bool Tc002AudioSink::playMelodyFile(const std::string& name, sound::Group group)
 }
 
 bool Tc002AudioSink::playMp3(const std::string& path, sound::Group group) {
-  if (!available() || voiceOwned_.load() || host::hostPath(path).empty()) return false;
+  if (!available() || voiceChannelClaimed_.load() || host::hostPath(path).empty()) return false;
   urls_.stop(false);
   return playOneShotMp3("", path, group);
 }
 
 bool Tc002AudioSink::playOneShotMp3(const std::string& file, const std::string& path, sound::Group group) {
-  if (!available() || voiceOwned_.load()) return false;
+  if (!available() || voiceChannelClaimed_.load()) return false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     ++request_.oneShotSeq;
@@ -63,7 +63,7 @@ bool Tc002AudioSink::playOneShotMp3(const std::string& file, const std::string& 
 
 // A playing melody ends before the fetch begins.
 bool Tc002AudioSink::playUrl(const std::string& url, sound::Group group, bool music) {
-  if (!available() || (!music && voiceOwned_.load())) return false;
+  if (!available() || (!music && voiceChannelClaimed_.load())) return false;
   if (!music) {
     stop();
     std::lock_guard<std::mutex> lock(mutex_);
@@ -117,7 +117,7 @@ UrlSounds::Speaker Tc002AudioSink::urlSpeaker() {
 
 DispatchResult Tc002AudioSink::playClip(std::string&& bytes, std::string& error) {
   if (!tc002::checkClip(bytes, error)) return DispatchResult::ValidationError;
-  if (!available() || voiceOwned_.load()) return DispatchResult::Unavailable;
+  if (!available() || voiceChannelClaimed_.load()) return DispatchResult::Unavailable;
   auto clip = std::make_shared<const std::string>(std::move(bytes));
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -132,7 +132,7 @@ DispatchResult Tc002AudioSink::playClip(std::string&& bytes, std::string& error)
 
 bool Tc002AudioSink::playEffect(const std::string& path) {
   const std::string file = host::hostPath(path);
-  if (!available() || voiceOwned_.load() || file.empty()) return false;
+  if (!available() || voiceChannelClaimed_.load() || file.empty()) return false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (request_.effects.size() >= kMaxQueuedEffects) return true;
@@ -162,15 +162,35 @@ bool Tc002AudioSink::loopFile(const std::string& file) {
   return true;
 }
 
+std::shared_ptr<speech::SpeechVoice> Tc002AudioSink::voice() const {
+  std::lock_guard<std::mutex> lock(voiceMutex_);
+  return voice_;
+}
+
+void Tc002AudioSink::setVoice(std::shared_ptr<speech::SpeechVoice> voice) {
+  std::lock_guard<std::mutex> lock(voiceMutex_);
+  voice_ = std::move(voice);
+}
+
 bool Tc002AudioSink::checkSpeech(const std::string& text, DispatchDetail& detail) {
+  const auto speaker = voice();
+  if (!speaker) {
+    detail.message = "no voice";
+    return false;
+  }
   auto plan = std::make_unique<speech::Plan>();
-  return speech::readText(text, *plan, detail);
+  return speech::readText(*speaker, text, *plan, detail);
 }
 
 DispatchResult Tc002AudioSink::playSpeech(const std::string& text, sound::Group group, DispatchDetail& detail) {
+  const auto speaker = voice();
+  if (!speaker) {
+    detail.message = "speaker unavailable";
+    return DispatchResult::Unavailable;
+  }
   auto plan = std::make_shared<speech::Plan>();
-  if (!speech::readText(text, *plan, detail)) return DispatchResult::ValidationError;
-  if (!speaks() || voiceOwned_.load()) {
+  if (!speech::readText(*speaker, text, *plan, detail)) return DispatchResult::ValidationError;
+  if (!speaks() || voiceChannelClaimed_.load()) {
     detail.message = "speaker unavailable";
     return DispatchResult::Unavailable;
   }
@@ -181,6 +201,7 @@ DispatchResult Tc002AudioSink::playSpeech(const std::string& text, sound::Group 
     request_.oneShot = Kind::Speech;
     request_.oneShotGroup = group;
     request_.speech = std::move(plan);
+    request_.speechVoice = speaker;
   }
   wake();
   return DispatchResult::Ok;
@@ -204,18 +225,30 @@ bool Tc002AudioSink::playSystemSound(const std::string& path, uint32_t skipFrame
   return true;
 }
 
-// The voice ends the one-shot and the effects; the audio thread holds the station and the loop
-// back until it lets go.
-void Tc002AudioSink::setVoiceOwned(bool owned) {
+posix::Hold Tc002AudioSink::claimVoiceChannel() {
+  bool free = false;
+  if (!voiceChannelClaimed_.compare_exchange_strong(free, true)) return {};
   voiceQuiet_.store(false);
-  voiceOwned_.store(owned);
-  if (owned) {
+  {
     std::lock_guard<std::mutex> lock(mutex_);
     ++request_.oneShotSeq; request_.oneShot = Kind::None; request_.clip.reset(); request_.speech.reset();
+    request_.speechVoice.reset();
     request_.oneShotSong.reset();
     ++request_.effectsStopSeq; request_.effects.clear(); effectsPending_ = 0;
   }
   wake();
+  return posix::Hold([this] {
+    voiceQuiet_.store(false);
+    voiceChannelClaimed_.store(false);
+    wake();
+  });
+}
+
+posix::Hold Tc002AudioSink::holdMusic() {
+  if (musicHolders_.fetch_add(1) == 0) wake();
+  return posix::Hold([this] {
+    if (musicHolders_.fetch_sub(1) == 1) wake();
+  });
 }
 
 void Tc002AudioSink::stopSystemSound() {
@@ -257,6 +290,7 @@ void Tc002AudioSink::endOneShotRequest() {
     request_.oneShot = Kind::None;
     request_.clip.reset();
     request_.speech.reset();
+    request_.speechVoice.reset();
     request_.oneShotSong.reset();
     ++request_.oneShotSeq;
   }
@@ -321,7 +355,7 @@ DispatchResult Tc002AudioSink::playStream(const std::string& url, const std::str
     detail.message = "invalid URL";
     return DispatchResult::ValidationError;
   }
-  if (!available() || voiceOwned_.load()) {
+  if (!available() || voiceChannelClaimed_.load()) {
     detail.clear();
     detail.message = "speaker unavailable";
     return DispatchResult::Unavailable;

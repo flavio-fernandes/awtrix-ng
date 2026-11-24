@@ -58,7 +58,7 @@ bool LinuxRuntime::runFrame() {
   else if (!booting) {
     app_->render(now);
     quickSettings_->draw(app_->canvas(), awtrixFont(), now);
-    if (voice_) voice_->draw(app_->canvas(), awtrixFont(), now);
+    voice_->draw(app_->canvas(), now);
   }
   const int64_t renderEndedUs = performance.now();
   board().show(app_->canvas());
@@ -89,8 +89,7 @@ bool LinuxRuntime::pollSupervisor(int64_t now) {
   const bool open = link_.poll([&](const tc002::SupervisorMessage& message) {
     if (update_ && message.type == tc002::MessageType::Hello) update_->applyHello(message);
     supervision_->apply(message);
-    if (message.type == tc002::MessageType::MicrophonePcm) microphone_->receive(message.microphonePcm, now);
-    if (voice_ && message.type == tc002::MessageType::MicrophoneStreamEvent) voice_->receive(message.streamEvent, now);
+    voice_->receive(message, now);
   });
   if (open) return true;
   std::fputs("Supervisor channel closed; stopping\n", stderr);
@@ -101,20 +100,15 @@ bool LinuxRuntime::pollSupervisor(int64_t now) {
 bool LinuxRuntime::pollInput(int64_t now) {
   if (!o_.physicalInput) return true;
   const bool panelBusy = intro_ || (update_ && update_->ownsPanel());
-  if (knobRouter_->poll(input_, now, panelBusy, scripts_ != nullptr)) return true;
+  if (knobRouter_->poll(input_, now, panelBusy, intro_ != nullptr, scripts_ != nullptr)) return true;
   std::fprintf(stderr, "Input failed: %s\n", input_.error().c_str());
   inputFailed_ = true;
   return false;
 }
 
 void LinuxRuntime::tickVoice(int64_t now) {
-  const bool voiceAllowed = voiceAllowedNow();
-  const bool knobVoice = voiceAllowed && !engine().state().settings().blockNavigation;
-  if (!knobVoice) knobGesture_.cancel();
-  if (!voice_) return;
-  voice_->tick(now, voiceAllowed);
-  if (knobGesture_.tick(now, knobVoice && voice_->ready()) == tc002::voice::KnobGesture::Action::Start)
-    startVoice(now);
+  const bool allowed = voiceAllowedNow();
+  voice_->tick(now, allowed, allowed && !engine().state().settings().blockNavigation);
 }
 
 void LinuxRuntime::tickNetwork(int64_t now) {
@@ -132,6 +126,7 @@ void LinuxRuntime::tickNetwork(int64_t now) {
       logf("mqtt: broker certificate not trusted, SHA-256 %s", fingerprint.c_str());
   }
   mirror_.tick(now, lan && (!supervised || supervision_->networkConnected()));
+  if (activation_) activation_->tick(now, supervision_->networkConnected() && clock_.synchronized());
   http_.tick();
   extensions_.phones.poll();
   if (!mqttAllowed_) return;
@@ -172,11 +167,12 @@ bool LinuxRuntime::persist() {
 
 int LinuxRuntime::stop() {
   performance_->stop();
-  if (voice_) voice_->cancel();
+  voice_->stop();
   const bool resetAll = system_.resetAll;
   if (!resetAll) persist();
   http_.stop();
   scriptHttp_.stop();
+  voice_->stopTransfers();
   remoteImages_->stop();
   webhook_->stop();
   coverFetch_.stop();
@@ -201,7 +197,7 @@ int LinuxRuntime::stop() {
       std::fputs("Supervisor channel refused the reboot request\n", stderr);
     if (!link_.flush(1000)) std::fputs("Supervisor channel did not take all pending messages\n", stderr);
   }
-  if (update_ && update_->ownsPanel()) static_cast<void>(selectedBoard_.release());
+  if (update_ && update_->ownsPanel()) boardKeptForUpdate_ = selectedBoard_.release();
   ::close(lock_);
   const bool clean = !error && saved && !displayFailed_ && !inputFailed_ && !readinessFailed_;
   const bool reported = performance_->finish(clean);
@@ -209,13 +205,12 @@ int LinuxRuntime::stop() {
 }
 
 bool LinuxRuntime::eraseAll(std::error_code& error) {
-  if (voice_ && !voice_->eraseConfig()) {
+  if (!voice_->eraseConfig()) {
     std::fputs("Factory reset could not erase private voice credentials\n", stderr);
     return false;
   }
-  oauthService_->stop();
-  if (!oauthService_->eraseAll()) {
-    std::fputs("Factory reset could not erase script sign-ins\n", stderr);
+  if (!scriptStores_.eraseAll()) {
+    std::fputs("Factory reset could not erase private script data\n", stderr);
     return false;
   }
   // Only the explicitly selected application data directory is erased. Keep

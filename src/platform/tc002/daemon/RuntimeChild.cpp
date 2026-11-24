@@ -95,35 +95,29 @@ std::vector<std::string> RuntimeChild::arguments(bool audio) const {
                                 tc002::kSupervisorFdFlag, std::to_string(kSupervisorFd), "--data", options_.dataDir,
                                 "--webui", options_.webui, "--lan", "--port", std::to_string(options_.httpPort),
                                 tc002::kStartReasonFlag, startReason_};
-  if (!options_.uidPath.empty() && !deviceId_.value().empty()) {
-    args.push_back(tc002::kUidFlag);
-    args.push_back(deviceId_.value());
-  }
+  const auto pass = [&args](const char* flag, const std::string& value) {
+    if (value.empty()) return;
+    args.push_back(flag);
+    args.push_back(value);
+  };
+  if (!options_.uidPath.empty()) pass(tc002::kUidFlag, deviceId_.value());
+  pass(tc002::kActivationFlag, options_.activationId);
   if (audio) {
     args.push_back(tc002::kAudioFdFlag);
     args.push_back(std::to_string(kAudioFd));
-    if (!options_.speechVoice.empty()) {
-      args.push_back("--speech-voice");
-      args.push_back(options_.speechVoice);
-    }
+    pass("--speech-voice", options_.speechVoice);
+    pass("--wake-word", options_.wakeWord);
+    pass("--vad", options_.vad);
   }
   if (options_.bluetooth) args.push_back(tc002::kBluetoothFlag);
   if (introOnNextStart()) {
     args.push_back("--boot-intro");
-    if (!options_.bootSound.empty()) {
-      args.push_back("--boot-sound");
-      args.push_back(options_.bootSound);
-    }
+    pass("--boot-sound", options_.bootSound);
   }
-  const std::pair<const char*, const std::string*> passed[] = {{"--ca-file", &options_.caFile},
-                                                               {"--update-state", &options_.updateState},
-                                                               {"--release-root", &options_.releaseRoot},
-                                                               {tc002::kUpdateDirFlag, &options_.updateDir}};
-  for (const auto& [flag, value] : passed) {
-    if (value->empty()) continue;
-    args.push_back(flag);
-    args.push_back(*value);
-  }
+  pass("--ca-file", options_.caFile);
+  pass("--update-state", options_.updateState);
+  pass("--release-root", options_.releaseRoot);
+  pass(tc002::kUpdateDirFlag, options_.updateDir);
   return args;
 }
 
@@ -436,6 +430,10 @@ void RuntimeChild::dispatch(const std::string& datagram, int64_t nowMs) {
       else Log::line("runtime", "no Wi-Fi service; no stored credentials to erase");
       if (links_.address) links_.address->setStaticAddress(tc002::StaticAddress());
       break;
+    case MessageType::SetupAccessPoint:
+      Log::line("runtime", "select held during the intro: setup access point");
+      if (links_.wifi) links_.wifi->openSetupAccessPoint();
+      break;
     case MessageType::WifiScan:
       requestScan();
       break;
@@ -550,7 +548,8 @@ bool RuntimeChild::onChildExit(pid_t pid, int status, int64_t nowMs) {
   pid_ = -1;
   killAt_ = readyDeadline_ = healthyAt_ = -1;
   if (helperPid_ > 0) helperStopAt_ = nowMs + options_.helperExitGraceMs;
-  if (stopRequested_) {
+  // A reboot request read with the exit: the stop reaches this service only later in this pass.
+  if (stopRequested_ || rebootPending_) {
     state_ = State::Stopped;
     return true;
   }

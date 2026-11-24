@@ -1,8 +1,19 @@
 //linux:begin
 document.head.append(el('style',null,`
-#sec-voice .badge:not(.bad){flex:none;white-space:nowrap;word-break:normal}
-#sec-voice .ctl{flex-wrap:wrap}
-#sec-voice .ctl input[type=password]{flex:1 1 180px}
+#sec-voice .badge{flex:none;font-size:12.5px;padding:5px 11px;white-space:nowrap;word-break:normal}
+#sec-voice .badge:not(.good,.bad){border:1px solid var(--brd2)}
+#sec-voice .badge::before{content:'';display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:50%;background:currentColor}
+#sec-voice>.rows{padding-bottom:0;margin-bottom:-1px}
+#sec-voice .cfggrp{font-size:13.5px;font-weight:500;margin:0}
+@media(max-width:760px){
+  #sec-voice .vcstate{grid-template-columns:auto minmax(0,1fr)}
+  #sec-voice .vcstate .lab{display:contents}
+  #sec-voice .vcstate .ctl{justify-content:flex-end}
+  #sec-voice .vcstate .help{grid-row:2;grid-column:1/-1}
+  #sec-voice .badge{flex:initial;white-space:normal}
+}
+#sec-voice .ctl,.cfgsection.secret .ctl{flex-wrap:wrap}
+#sec-voice .ctl input[type=password],.cfgsection.secret .ctl input[type=password]{flex:1 1 180px}
 `));
 const GPSTATE={ready:'mqup',waiting:'mqdown',connecting:'mqbusy',pairing:'scanning'};
 function gamepadSection(page){
@@ -56,67 +67,155 @@ function gamepadSection(page){
   poller(load,()=>!cur||cur.devices?.some(p=>p.state==='pairing'||p.state==='connecting')?2000:5000);
 }
 function voiceSection(page){
-  const state=el('div',{class:'badge'}),tokenState=el('div',{class:'badge'});
+  const OFF='off',HA='ha',APP='app:',UNLINKED=['offline','connecting','error'];
+  const assist=el('select',{'aria-label':t('vcAssist')});
+  assist.addEventListener('change',()=>store({assistant:assist.value}));
+  const state=el('div',{class:'badge'}),hint=el('span');
+  const stateRow=actionRow(t('oaStatus'),hint,[state]);
+  stateRow.classList.add('vcstate');
+  const wakeHint=el('span');
+  const wake=mkSwitch(false,()=>store({wakeWord:wake.input.checked}));
+  const wakeRow=actionRow(t('vcWake'),wakeHint,[wake.node]);
+  const sens=el('select',{'aria-label':t('vcSens')},['low','normal','high'].map(v=>el('option',{value:v},t('vcSens'+v))));
+  sens.addEventListener('change',()=>store({wakeSensitivity:sens.value}));
+  const sensRow=actionRow(t('vcSens'),t('vcSensH'),[sens]);
   const url=el('input',{type:'text',inputmode:'url',autocomplete:'off',spellcheck:'false',placeholder:'http://homeassistant.local:8123','aria-label':t('vcUrl')});
   const token=el('input',{type:'password',autocomplete:'new-password',spellcheck:'false','aria-label':t('vcToken')});
+  const clear=armable(el('button',null,t('seRemove')),()=>store({clearToken:true}));
+  const connect=el('button',{class:'pri'},t('vcConnect'));
   const pipe=el('select',{'aria-label':t('vcPipe')});
+  pipe.addEventListener('change',()=>store({pipeline:pipe.value}));
+  const pipeRow=actionRow(t('vcPipe'),t('vcPipeH'),[pipe]);
   const dev=el('input',{type:'text',autocomplete:'off',spellcheck:'false',placeholder:t('vcDevP'),'aria-label':t('vcDev')});
-  const on=mkSwitch(false,()=>store({enabled:on.input.checked},t('saved')));
-  const save=el('button',{class:'pri'},t('vcSave'));
-  let cur=null,pipes='';
-  const clear=armable(el('button',null,t('vcTokenClear')),()=>store({clearToken:true,enabled:false},t('saved')));
-  const reason=code=>code?(STR['vce'+code]?t('vce'+code):code):'';
+  dev.addEventListener('change',()=>{
+    dev.value=dev.value.trim().split(/[/?#]/).filter(Boolean).pop()||'';
+    store({device:dev.value});
+  });
+  const devRow=actionRow(t('vcDev'),t('vcDevH'),[dev]);
+  const{box,rows}=scriptSectionBox('haset',t('vcHaBox'));
+  rows.append(actionRow(t('vcUrl'),null,[url]),actionRow(t('vcToken'),t('vcTokenH'),[token,clear]),
+    el('div',{class:'frow full'},el('div',{class:'ctl'},connect)),pipeRow,devRow);
+  let cur=null,pipes='',apps='',opened=false;
+  const reason=code=>STR['vce'+code]?t('vce'+code):code;
+  const fix=code=>STR['vcx'+code]||'';
+  const show=(nodes,on)=>{for(const node of nodes)node.style.display=on?'':'none';};
+  const warn=(node,on)=>node.parentNode.classList.toggle('warn',on);
+  const originOf=v=>{
+    try{return new URL(/^https?:\/\//i.test(v)?v:'http://'+v).origin;}
+    catch(e){return v;}
+  };
+  const checkConnect=()=>{
+    const c=cur.config,kept=c.tokenSet&&originOf(url.value.trim())===originOf(c.url);
+    connect.disabled=!url.value.trim()||!(token.value.trim()||kept);
+    token.placeholder=kept?t('oaKeep'):c.tokenSet?t('vcTokenAgain'):'';
+  };
+  function status(d,setUp){
+    if(d.error)return[reason(d.error),' bad',fix(d.error)];
+    if(!setUp)return[t('vcUnset'),'',t('vcUnsetH')];
+    const last=d.lastError?t('vcLast')+' '+reason(d.lastError)+'. '+fix(d.lastError):'';
+    if(UNLINKED.includes(d.state))return[t('mqbusy'),'',last];
+    return[t('vc'+d.state),' good',last];
+  }
   function paint(d){
     const first=!cur;cur=d;
-    const c=d.config||{};
-    if(first){url.value=c.url||'';dev.value=c.device||'';}
-    on.input.checked=!!c.enabled;
-    tokenState.className='badge'+(c.tokenSet?' good':'');
-    tokenState.replaceChildren(t(c.tokenSet?'vcTokenSet':'vcTokenNone'));
-    token.placeholder=c.tokenSet?t('vcTokenKeep'):'';
-    clear.disabled=!c.tokenSet;
-    const list=(d.pipelines||[]).filter(p=>p.stt_engine&&p.tts_engine);
-    const sig=JSON.stringify(list);
-    if(first||sig!==pipes){
-      pipes=sig;
-      const want=first?c.pipeline||'':pipe.value;
-      pipe.replaceChildren(el('option',{value:''},t('vcPipeDef')),
-        ...list.map(p=>el('option',{value:p.id},p.name||p.id)));
-      if(want&&!list.some(p=>p.id===want))pipe.append(el('option',{value:want},want));
-      pipe.value=want;
+    const c=d.config,target=c.assistant,off=target===OFF,ha=target===HA;
+    const app=target.startsWith(APP)?target.slice(APP.length):'';
+    if(first){url.value=c.url;dev.value=c.device;}
+    const names=d.assistantApps,listed=app&&!names.includes(app)?[...names,app]:names;
+    const appsSig=JSON.stringify(listed);
+    if(appsSig!==apps){
+      apps=appsSig;
+      assist.replaceChildren(el('option',{value:OFF},t('mqoff')),el('option',{value:HA},t('vcAssistHa')),
+        ...listed.map(n=>el('option',{value:APP+n},n)));
     }
-    const why=c.enabled?reason(d.error):'';
-    state.className='badge'+(why?' bad':d.state==='ready'?' good':'');
-    state.replaceChildren(why||t('vc'+d.state));
+    assist.value=target;
+    const setUp=!ha||(!!c.url&&c.tokenSet),linked=!UNLINKED.includes(d.state);
+    const[text,cls,help]=status(d,setUp);
+    state.className='badge'+cls;
+    state.replaceChildren(text);
+    hint.replaceChildren(help);
+    warn(hint,!d.error&&!!d.lastError);
+    show([stateRow],!off||!!d.error);
+    const hears=d.wakeWordAvailable&&!off&&setUp;
+    const waiting=c.wakeWord&&!d.wakeListening&&(d.state==='ready'||!linked);
+    wake.input.checked=c.wakeWord;
+    sens.value=c.wakeSensitivity;
+    wakeHint.replaceChildren(t(waiting?'vcWakeWait':'vcWakeH'));
+    warn(wakeHint,waiting);
+    show([wakeRow],hears);
+    show([sensRow],hears&&c.wakeWord);
+    show([box],ha);
+    const want=ha&&(!setUp||(!linked&&!!d.error))?true:linked?false:opened;
+    if(want!==opened&&!box.contains(document.activeElement?.closest('input'))){opened=want;box.open=want;}
+    show([clear],c.tokenSet);
+    checkConnect();
+    const speech=d.pipelines.filter(p=>p.stt_engine&&p.tts_engine).map(p=>[p.id,p.name||p.id]);
+    const choices=c.pipeline&&!speech.some(([id])=>id===c.pipeline)?[...speech,[c.pipeline,c.pipeline]]:speech;
+    const sig=JSON.stringify(choices);
+    if(sig!==pipes){
+      pipes=sig;
+      pipe.replaceChildren(el('option',{value:''},t('vcPipeDef')),...choices.map(([id,name])=>el('option',{value:id},name)));
+    }
+    pipe.value=c.pipeline;
+    show([pipeRow],speech.length>0);
+    show([devRow],linked||!!c.device);
   }
   async function load(){paint((await api('/api/v1/voice',{timeout:4000})).data);}
-  async function store(body,done){
-    save.disabled=true;
+  async function store(body){
+    connect.disabled=true;
     try{
-      await api('/api/v1/voice',{method:'POST',headers:{'Content-Type':'application/json','X-Awtrix-Voice':'1'},body:JSON.stringify(body)});
+      await ownPageSend('/api/v1/voice','X-Awtrix-Voice','POST',body);
       if(body.token)token.value='';
-      toast(done);
+      toast(t('saved'));
     }catch(e){
       toast(e.code==='validationFailed'&&STR['vcf'+e.field]?t('vcf'+e.field):e.message,false);
     }
-    save.disabled=false;
+    checkConnect();
     try{await load();}catch(e){}
   }
-  save.addEventListener('click',()=>{
-    const body={url:url.value.trim(),pipeline:pipe.value,device:dev.value.trim().split(/[/?#]/).filter(Boolean).pop()||'',enabled:true};
-    dev.value=body.device;
-    if(token.value)body.token=token.value;
-    store(body,t('saved'));
+  url.addEventListener('input',checkConnect);
+  token.addEventListener('input',checkConnect);
+  connect.addEventListener('click',()=>{
+    connect.focus();
+    const body={url:originOf(url.value.trim())},secret=token.value.trim();
+    url.value=body.url;
+    if(secret)body.token=secret;
+    store(body);
   });
-  page.section('voice',t('vcSection'),t('vcSectionH'),[
-    actionRow(t('mqStatus'),null,[state]),
-    actionRow(t('vcOn'),t('vcOnH'),[on.node]),
-    actionRow(t('vcUrl'),null,[url]),
-    actionRow(t('vcToken'),t('vcTokenH'),[tokenState,token,clear]),
-    actionRow(t('vcPipe'),t('vcPipeH'),[pipe]),
-    actionRow(t('vcDev'),t('vcDevH'),[dev]),
-    actionRow('',null,[save])]);
+  for(const field of[url,token])field.addEventListener('keydown',e=>{if(e.key==='Enter'&&!connect.disabled)connect.click();});
+  const details=[stateRow,wakeRow,sensRow,box];
+  show(details,false);
+  page.section('voice',t('vcSection'),t('vcSectionH'),[actionRow(t('vcAssist'),t('vcAssistH'),[assist]),...details]);
   poller(load,2000);
+}
+const SV='/api/v1/speech/voice';
+function speechVoiceSection(page){
+  const info=el('div',{class:'badge'});
+  const fileIn=el('input',{type:'file',accept:'.atts',style:'display:none'});
+  const up=el('button',null,t('svUpload'));up.addEventListener('click',()=>fileIn.click());
+  const done=r=>{paint(r.data);toast(t('saved'));};
+  const builtin=armable(el('button',{style:'display:none'},t('svBuiltin')),()=>req('DELETE',SV).then(done,toastErr));
+  const line=el('input',{type:'text',placeholder:t('svLineP'),'aria-label':t('svLine')});
+  const say=el('button',null,t('svSay'));
+  say.addEventListener('click',()=>post('/api/v1/audio/play',{speech:line.value.trim()||t('svLineP')}).catch(toastErr));
+  fileIn.addEventListener('change',async()=>{
+    const f=fileIn.files[0];fileIn.value='';
+    if(!f)return;
+    const fd=new FormData();fd.append('voice',f,f.name);
+    up.disabled=true;
+    try{done(await api(SV,{method:'POST',body:fd,timeout:60000}));}catch(e){toastErr(e);}
+    up.disabled=false;
+  });
+  function paint(d){
+    info.className='badge'+(d.name?' good':' bad');
+    info.replaceChildren(d.name?d.name+' · '+String(d.language).toUpperCase()+(d.uploaded?'':' · '+t('svBuiltinTag')):t('svNone'));
+    builtin.style.display=d.uploaded?'':'none';
+  }
+  page.section('speechvoice',t('svSection'),t('svSectionH'),[
+    actionRow(t('svActive'),null,[info,builtin]),
+    actionRow(t('svPack'),t('svPackH'),[up,fileIn]),
+    actionRow(t('svLine'),null,[line,say])]);
+  api(SV,{timeout:4000}).then(r=>paint(r.data),()=>{});
 }
 const IPSTATE={off:'mqoff',waiting:'ipWait',connecting:'mqbusy',ready:'mqup'};
 function brokerTrustRows(page){
@@ -171,29 +270,21 @@ function iphoneSection(page){
     actionRow(t('mqStatus'),null,[state,forget])]);
   poller(load,()=>cur.state==='connecting'?2000:5000);
 }
-const OAUTH='/api/v1/oauth/';
-const oauthSend=(path,body,method='POST')=>api(OAUTH+path,{method,
-  headers:{'Content-Type':'application/json','X-Awtrix-OAuth':'1'},body:JSON.stringify(body||{})});
-async function loadOauthApps(){
-  if(!S.oauth||S.oauthLoading)return;
-  S.oauthLoading=true;
-  try{
-    const{data}=await api('/api/v1/oauth');
-    const names=(data.apps||[]).map(a=>a.name).sort();
-    if(names.join('\n')!==[...(S.oauthApps||[])].sort().join('\n')){
-      S.oauthApps=new Set(names);
-      if(location.hash.startsWith('#/apps'))render();
-    }
-  }catch(e){}
-  S.oauthLoading=false;
+const ownPageSend=(url,marker,method,body)=>api(url,{method,
+  headers:{'Content-Type':'application/json',[marker]:'1'},body:JSON.stringify(body||{})});
+function scriptSectionBox(cls,title,open){
+  const rows=el('div',{class:'cfgrows'});
+  const box=el('details',{class:'cfgsection '+cls},
+    el('summary',null,icon('chev'),el('h3',{class:'cfggrp'},title)),rows);
+  box.open=!!open;
+  return{box,rows};
 }
+const OAUTH='/api/v1/oauth/';
+const oauthSend=(path,method,body)=>ownPageSend(OAUTH+path,'X-Awtrix-OAuth',method,body);
 async function oauthSection(name,open){
   const path=encodeURIComponent(name);
   const{data:s}=await api(OAUTH+path);
-  const rows=el('div',{class:'cfgrows'});
-  const box=el('details',{class:'cfgsection oauth'},
-    el('summary',null,icon('chev'),el('h3',{class:'cfggrp'},t('oaSection')+(s.provider?' · '+s.provider:''))),rows);
-  box.open=!!open;
+  const{box,rows}=scriptSectionBox('oauth',t('oaSection')+(s.provider?' · '+s.provider:''),open);
   const reload=async()=>box.replaceWith(await oauthSection(name,box.open));
   const id=el('input',{type:'text',autocomplete:'off',spellcheck:'false',value:s.clientId||'','aria-label':t('oaId')});
   const secret=el('input',{type:'password',autocomplete:'new-password',spellcheck:'false','aria-label':t('oaSecret'),
@@ -207,16 +298,16 @@ async function oauthSection(name,open){
     if(id.value.trim()===(s.clientId||'')&&!secret.value)return;
     const body={clientId:id.value.trim()};
     if(secret.value)body.clientSecret=secret.value;
-    await oauthSend(path,body);
+    await oauthSend(path,'POST',body);
   }
   save.addEventListener('click',async()=>{
     try{await store();toast(t('saved'));await reload();}catch(e){toastErr(e);}
   });
   go.addEventListener('click',async()=>{
     try{
-      if(s.state==='signedIn'){await oauthSend(path,null,'DELETE');await reload();return;}
+      if(s.state==='signedIn'){await oauthSend(path,'DELETE');await reload();return;}
       await store();
-      const{data}=await oauthSend(path+'/start');
+      const{data}=await oauthSend(path+'/start','POST');
       location.assign(data.url);
     }catch(e){toastErr(e);}
   });
@@ -226,17 +317,70 @@ async function oauthSection(name,open){
     el('div',{class:'cfgbar'},el('span',{class:'grow'}),save,go));
   return box;
 }
-// Scripts with an @oauth line get the sign-in as their own first section, also after every save.
+const SECRETS='/api/v1/secrets/';
+const secretSend=(path,method,body)=>ownPageSend(SECRETS+path,'X-Awtrix-Secret',method,body);
+async function secretSection(name,open){
+  const path=encodeURIComponent(name);
+  const{data:s}=await api(SECRETS+path);
+  const{box,rows}=scriptSectionBox('secret',t('seSection'),open);
+  if(s.invalid){
+    rows.append(el('div',{class:'badge bad'},t('seInvalid')+' · '+s.invalid));
+    return box;
+  }
+  const reload=async()=>box.replaceWith(await secretSection(name,box.open));
+  rows.append(el('div',{class:'badge warn'},t('seWarn')));
+  const fields=(s.keys||[]).map(k=>{
+    const label=k.label||k.key;
+    const input=el('input',{type:'password',autocomplete:'new-password',spellcheck:'false','aria-label':label,
+      placeholder:t(k.set?'seSet':'seEmpty')});
+    const remove=k.set?armable(el('button',null,t('seRemove')),()=>
+      secretSend(path+'/'+encodeURIComponent(k.key),'DELETE').then(reload).catch(toastErr)):null;
+    rows.append(actionRow(label,[k.help,t('seHosts')+' '+k.hosts.join(', ')].filter(Boolean).join(' · '),[input,remove]));
+    return[k.key,input];
+  });
+  const save=el('button',{class:'pri'},t('save'));
+  save.addEventListener('click',async()=>{
+    const filled=fields.filter(([,input])=>input.value);
+    if(!filled.length)return;
+    try{
+      await secretSend(path,'PUT',Object.fromEntries(filled.map(([key,input])=>[key,input.value])));
+      toast(t('saved'));
+      await reload();
+    }catch(e){toastErr(e);}
+  });
+  rows.append(el('div',{class:'cfgbar'},el('span',{class:'grow'}),save));
+  return box;
+}
+const SCRIPT_SECTIONS=[
+  {cap:'oauth',apps:'oauthApps',list:'/api/v1/oauth',names:d=>(d.apps||[]).map(a=>a.name),cls:'oauth',make:oauthSection,first:true},
+  {cap:'secret',apps:'secretApps',list:'/api/v1/secrets',names:d=>d.apps||[],cls:'secret',make:secretSection}];
+const hasScriptSection=name=>SCRIPT_SECTIONS.some(s=>S[s.apps]?.has(name));
+async function loadScriptSection(s){
+  if(!S[s.cap]||s.loading)return;
+  s.loading=true;
+  try{
+    const names=s.names((await api(s.list)).data).sort();
+    if(names.join('\n')!==[...(S[s.apps]||[])].sort().join('\n')){
+      S[s.apps]=new Set(names);
+      if(location.hash.startsWith('#/apps'))render();
+    }
+  }catch(e){}
+  s.loading=false;
+}
+function loadScriptSections(){SCRIPT_SECTIONS.forEach(loadScriptSection);}
 const fillScriptConfig=fillConfigPanel;
 fillConfigPanel=async(name,box,saveError,builtin)=>{
-  const open=box.querySelector('.cfgsection.oauth')?.open;
+  const open=new Map(SCRIPT_SECTIONS.map(s=>[s.cls,box.querySelector('.cfgsection.'+s.cls)?.open]));
   const ok=await fillScriptConfig(name,box,saveError,builtin);
-  if(!ok||builtin||!S.oauthApps||!S.oauthApps.has(name))return ok;
-  try{
-    const section=await oauthSection(name,open);
-    [...box.children].find(n=>n.textContent===t('cfgNone'))?.remove();
-    box.prepend(section);
-  }catch(e){box.append(el('div',{class:'badge bad'},e.message));}
+  if(!ok||builtin)return ok;
+  for(const s of SCRIPT_SECTIONS){
+    if(!S[s.apps]?.has(name))continue;
+    try{
+      const section=await s.make(name,open.get(s.cls));
+      [...box.children].find(n=>n.textContent===t('cfgNone'))?.remove();
+      if(s.first)box.prepend(section);else box.append(section);
+    }catch(e){box.append(el('div',{class:'badge bad'},e.message));}
+  }
   return ok;
 };
 // Back from the provider through the Hub: #oauth=<code>&state=<state>, or #oauth_error=<reason>.
@@ -254,7 +398,7 @@ async function oauthReturn(){
   if(q.has('oauth_error')){toast(t('oaerror')+' · '+q.get('oauth_error'),false);return;}
   try{
     const path=encodeURIComponent(app);
-    await oauthSend(path+'/code',{code:q.get('oauth')||'',state});
+    await oauthSend(path+'/code','POST',{code:q.get('oauth')||'',state});
     for(let i=0;i<30;i++){
       const{data}=await api(OAUTH+path);
       if(data.state==='signedIn'){toast(t('oaDone'));render();return;}

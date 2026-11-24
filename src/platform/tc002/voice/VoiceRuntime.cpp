@@ -1,29 +1,20 @@
-#include "VoiceErrors.h"
 #include "platform/tc002/voice/VoiceRuntime.h"
 
 #include <unistd.h>
 
-#include "core/api/ApiRouter.h"
-#include "core/api/JsonWriter.h"
-#include "platform/linux/host/vendor/httplib.h"
 #include "platform/posix/Files.h"
 #include "platform/tc002/voice/StreamClock.h"
 
 namespace awtrix::tc002::voice {
-VoiceRuntime::VoiceRuntime(std::string directory, Tc002Speaker& speaker,
-                           MicrophoneInput& microphone,
-                           Send send)
+VoiceRuntime::VoiceRuntime(std::string directory, VoiceSpeaker& speaker, MicrophonePort microphone)
     : config_(std::move(directory)),
       speaker_(speaker),
-      microphone_(microphone),
       download_("/tmp", "awtrix-voice", {2 * 1024 * 1024, 15000, false, nullptr}),
       session_({[this](std::string bytes, bool binary) {
                   return socket_.send(std::move(bytes), binary);
                 },
                 [this] { socket_.cancel(); },
-                [send](StreamControl control) {
-                  return send(encodeStreamControl(control));
-                },
+                std::move(microphone),
                 [this](const std::string& target) {
                   downloadGeneration_ =
                       download_.start(config_.get().url, target);
@@ -47,26 +38,36 @@ void VoiceRuntime::receive(const StreamEvent& event, int64_t now) {
       session_.state() == AssistSession::State::Listening)
     overlay_.audio(event.samples.data(), event.samples.size(), now);
 }
-void VoiceRuntime::stopSpeaker() {
-  download_.cancel();
-  speaker_.stopVoice();
-  playing_ = false;
+void VoiceRuntime::removePlaybackFile() {
   if (!playbackPath_.empty()) ::unlink(playbackPath_.c_str());
   playbackPath_.clear();
+}
+void VoiceRuntime::stopSpeaker() {
+  download_.cancel();
+  if (playing_) speaker_.stop();
+  playing_ = false;
+  removePlaybackFile();
 }
 void VoiceRuntime::cancel() {
   errorFeedback_ = false;
   pendingStart_ = false;
   session_.cancel();
-  microphone_.setStreaming(false);
-  speaker_.setVoiceOwned(false);
-  owned_ = false;
+  voiceChannel_.reset();
+}
+bool VoiceRuntime::updateConfig(std::string_view json, ConfigStore::Rejection& rejection) {
+  const Config before = config_.get();
+  if (!config_.update(json, rejection)) return false;
+  if (!loaded_ || !onlyWakeChanged(before, config_.get())) {
+    cancel();
+    reconnectAt_ = 0;
+  }
+  loaded_ = true;
+  return true;
 }
 bool VoiceRuntime::begin(int64_t now) {
   if (!session_.ready() || !speaker_.available()) return false;
-  speaker_.setVoiceOwned(true);
-  microphone_.setStreaming(true);
-  owned_ = true;
+  if (!voiceChannel_) voiceChannel_ = speaker_.claimVoiceChannel();
+  if (!voiceChannel_) return false;
   pendingStart_ = true;
   startAt_ = now;
   overlay_.reset(now);
@@ -75,31 +76,39 @@ bool VoiceRuntime::begin(int64_t now) {
 void VoiceRuntime::endInput(int64_t now) {
   if (pendingStart_) {
     pendingStart_ = false;
-    microphone_.setStreaming(false);
-    speaker_.setVoiceOwned(false);
-    owned_ = false;
+    voiceChannel_.reset();
   } else
     session_.endInput(now);
 }
 void VoiceRuntime::tick(int64_t now, bool allowed) {
   if (now >= feedbackUntil_) errorFeedback_ = false;
   const auto& c = config_.get();
-  if (!loaded_ || !allowed || !c.enabled) {
+  if (!loaded_ || !allowed || !homeAssistant() || c.url.empty() || c.token.empty()) {
     if (pendingStart_ || session_.state() != AssistSession::State::Offline)
       cancel();
     reconnectAt_ = now + 500;
     return;
   }
-  if ((session_.state() == AssistSession::State::Offline ||
-       session_.state() == AssistSession::State::Error) &&
-      now >= reconnectAt_) {
-    WebSocket::Endpoint endpoint;
-    if (parseOrigin(c.url, endpoint)) {
-      session_.connecting(c, now);
-      generation_ = socket_.connect(endpoint);
-      reconnectAt_ = now + 10000;
-    }
-  }
+  connectIfDue(c, now);
+  pumpSocket(now);
+  session_.tick(now);
+  startPending(now);
+  pollDownload(now);
+  finishPlayback(now);
+  releaseVoiceChannel(now);
+}
+void VoiceRuntime::connectIfDue(const Config& config, int64_t now) {
+  if ((session_.state() != AssistSession::State::Offline &&
+       session_.state() != AssistSession::State::Error) ||
+      now < reconnectAt_)
+    return;
+  WebSocket::Endpoint endpoint;
+  if (!parseOrigin(config.url, endpoint)) return;
+  session_.connecting(config, now);
+  generation_ = socket_.connect(endpoint);
+  reconnectAt_ = now + 10000;
+}
+void VoiceRuntime::pumpSocket(int64_t now) {
   for (auto& event : socket_.poll()) {
     if (event.generation != generation_) continue;
     if (event.kind == WebSocket::Event::Text)
@@ -107,47 +116,43 @@ void VoiceRuntime::tick(int64_t now, bool allowed) {
     else if (event.kind != WebSocket::Event::Open)
       session_.lost(now);
   }
-  session_.tick(now);
-  if (pendingStart_) {
-    if (!session_.ready() || !speaker_.available() || now - startAt_ >= 1000)
-      endInput(now);
-    else if (speaker_.voiceQuiet()) {
-      pendingStart_ = false;
-      session_.begin(now);
-    }
-  }
-  net::FileDownload::Result result;
-  if (download_.poll(result)) {
-    if (result.generation == downloadGeneration_ &&
-        session_.state() == AssistSession::State::Speaking) {
-      playbackPath_ = std::move(result.path);
-      playing_ = result.success() && speaker_.playVoice(playbackPath_);
-      if (!playing_) session_.playbackDone(false, now);
-    } else if (!result.path.empty())
-      ::unlink(result.path.c_str());
-  }
-  if (playing_ && (!speaker_.available() || speaker_.voiceFinished())) {
-    int64_t audible = -1;
-    const bool success =
-        speaker_.available() && speaker_.bootSoundStart(audible) ==
-                                    Tc002AudioSink::SystemStart::Audible;
-    playing_ = false;
-    session_.playbackDone(success, now);
-    if (!playbackPath_.empty()) ::unlink(playbackPath_.c_str());
-    playbackPath_.clear();
-  }
-  if (owned_ && !pendingStart_ && !session_.busy()) {
-    if (session_.state() == AssistSession::State::Error) {
-      errorFeedback_ = true;
-      feedbackUntil_ = now + 1500;
-    }
-    microphone_.setStreaming(false);
-    speaker_.setVoiceOwned(false);
-    owned_ = false;
+}
+void VoiceRuntime::startPending(int64_t now) {
+  if (!pendingStart_) return;
+  if (!session_.ready() || !speaker_.available() || now - startAt_ >= 1000)
+    endInput(now);
+  else if (speaker_.quiet()) {
+    pendingStart_ = false;
+    session_.begin(now);
   }
 }
-bool VoiceRuntime::draw(Canvas& canvas, const GfxFont&, int64_t now) {
-  if (!busy()) return false;
+void VoiceRuntime::pollDownload(int64_t now) {
+  net::FileDownload::Result result;
+  if (!download_.poll(result)) return;
+  if (result.generation == downloadGeneration_ &&
+      session_.state() == AssistSession::State::Speaking) {
+    playbackPath_ = std::move(result.path);
+    playing_ = result.success() && speaker_.play(playbackPath_);
+    if (!playing_) session_.playbackDone(false, now);
+  } else if (!result.path.empty())
+    ::unlink(result.path.c_str());
+}
+void VoiceRuntime::finishPlayback(int64_t now) {
+  if (!playing_ || !speaker_.finished()) return;
+  playing_ = false;
+  session_.playbackDone(speaker_.heard(), now);
+  removePlaybackFile();
+}
+void VoiceRuntime::releaseVoiceChannel(int64_t now) {
+  if (!voiceChannel_ || pendingStart_ || session_.busy()) return;
+  if (session_.state() == AssistSession::State::Error) {
+    errorFeedback_ = true;
+    feedbackUntil_ = now + 1500;
+  }
+  voiceChannel_.reset();
+}
+void VoiceRuntime::draw(Canvas& canvas, int64_t now) {
+  if (!busy()) return;
   const auto state = session_.state();
   using Phase = VoiceOverlay::Phase;
   overlay_.draw(canvas,
@@ -158,58 +163,5 @@ bool VoiceRuntime::draw(Canvas& canvas, const GfxFont&, int64_t now) {
                 : state == AssistSession::State::Processing ? Phase::Processing
                                                             : Phase::Starting,
                 now);
-  return true;
-}
-namespace {
-void sendError(httplib::Response& res, int status, const char* code,
-               const std::string& message, const std::string& field = {}) {
-  res.status = status;
-  res.set_content(api::errorJson(code, message, field), "application/json");
-}
-}  // namespace
-bool VoiceRuntime::handle(const httplib::Request& req, httplib::Response& res) {
-  if (req.path != "/api/v1/voice") return false;
-  res.set_header("Cache-Control", "no-store");
-  if (req.method == "GET") {
-    std::string json;
-    api::JsonWriter(json)
-        .beginObject()
-        .key("config")
-        .raw(config_.publicJson())
-        .member("state", AssistSession::name(session_.state()))
-        .member("error",
-                !loaded_ ? errors::configUnavailable
-                : session_.state() == AssistSession::State::Ready &&
-                        !session_.microphoneAvailable()
-                    ? errors::microphoneUpdate
-                    : session_.error())
-        .key("pipelines")
-        .raw(session_.pipelines())
-        .endObject();
-    res.set_content(json, "application/json");
-  } else if (req.method == "POST") {
-    if (req.get_header_value("X-Awtrix-Voice") != "1" ||
-        !api::sameOrigin(req.get_header_value("Origin"), req.get_header_value("Host"),
-                          req.get_header_value_count("Origin"), req.get_header_value_count("Host"), true)) {
-      sendError(res, 403, "forbiddenOrigin",
-                "only from this device's web page");
-      return true;
-    }
-    ConfigStore::Rejection rejection;
-    if (!config_.update(req.body, rejection)) {
-      if (rejection.stored)
-        sendError(res, 422, "validationFailed", rejection.message, rejection.field);
-      else
-        sendError(res, 500, "internalError", rejection.message);
-    } else {
-      cancel();
-      loaded_ = true;
-      reconnectAt_ = 0;
-      res.set_content("{\"ok\":true}", "application/json");
-    }
-  } else {
-    sendError(res, 405, "methodNotAllowed", "allowed: GET, POST");
-  }
-  return true;
 }
 }  // namespace awtrix::tc002::voice

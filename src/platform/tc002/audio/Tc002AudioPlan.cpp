@@ -69,9 +69,8 @@ void Tc002AudioSink::applyVolumes(const Request& request) {
   player_.setVolume(link);
 }
 
-// The voice assistant holds the station and the loop back; the loop starts over once it lets go.
 void Tc002AudioSink::reconcile(int64_t nowMs) {
-  const bool voice = voiceOwned_.load();
+  const bool musicWaits = voiceChannelClaimed_.load() || musicHolders_.load() > 0;
   Request request;
   std::vector<Effect> effects;
   std::vector<std::string> released;
@@ -91,16 +90,17 @@ void Tc002AudioSink::reconcile(int64_t nowMs) {
       request.systemSkipFrames = request_.systemSkipFrames;
       request.clip = std::move(request_.clip);
       request.speech = std::move(request_.speech);
+      request.speechVoice = std::move(request_.speechVoice);
       request.oneShotSong = std::move(request_.oneShotSong);
     }
     effects.swap(request_.effects);
     released.swap(request_.released);
     effectsStopped = request_.effectsStopSeq != playingEffectsStopSeq_;
     request.effectsStopSeq = request_.effectsStopSeq;
-    loopChanged = voice ? !loopHeld_
-                        : request_.loopSeq != playingLoopSeq_ || (loopHeld_ && !request_.loop.empty());
+    loopChanged = musicWaits ? !loopHeld_
+                             : request_.loopSeq != playingLoopSeq_ || (loopHeld_ && !request_.loop.empty());
     request.loopSeq = request_.loopSeq;
-    if (!voice && loopChanged) request.loop = request_.loop;
+    if (!musicWaits && loopChanged) request.loop = request_.loop;
     streamChanged = request_.streamSeq != playingStreamSeq_;
     request.streamSeq = request_.streamSeq;
     request.streamWanted = request_.streamWanted;
@@ -124,7 +124,7 @@ void Tc002AudioSink::reconcile(int64_t nowMs) {
   }
   playingEffectsStopSeq_ = request.effectsStopSeq;
   playingLoopSeq_ = request.loopSeq;
-  loopHeld_ = voice;
+  loopHeld_ = musicWaits;
 
   const bool wanted = source || !effects.empty() || (loopChanged && !request.loop.empty());
   if (wanted && (playing_ != Playing::Mix || player_.draining()))
@@ -171,7 +171,7 @@ void Tc002AudioSink::reconcile(int64_t nowMs) {
   }
 
   // A one-shot that repeats keeps the station away between its plays.
-  if (streamChanged || voice) {
+  if (streamChanged || musicWaits) {
     playingStreamSeq_ = request.streamSeq;
     if (playing_ == Playing::Stream) {
       player_.stop();
@@ -179,7 +179,7 @@ void Tc002AudioSink::reconcile(int64_t nowMs) {
       playing_ = Playing::None;
     }
   }
-  if (playing_ == Playing::None && request.streamWanted && !voice && !request.streamHeld)
+  if (playing_ == Playing::None && request.streamWanted && !musicWaits && !request.streamHeld)
     startStream(request, nowMs);
   applyVolumes(request);
 }

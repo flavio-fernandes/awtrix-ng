@@ -390,11 +390,12 @@ mosquitto_pub -h broker.local -t 'awtrixNG/cmd/screen/get' -m ''
 <!-- only tc002 -->
 ### voice/start
 
-Payload ignored. Starts [Home Assistant Voice](../guides/voice.md), as if you held the
-knob, and answers `{"ok":true}`.
+Payload ignored. Starts the [voice assistant](../guides/voice.md), as if you held the knob:
+Home Assistant Voice, or the app chosen as the assistant. Answers `{"ok":true}`.
 
-It answers `unavailable`, `voice not ready` while Voice is off, not connected yet, already busy, or
-the clock is still starting. [`blockNavigation`](settings.md) does not stop it.
+It answers `unavailable`, `voice not ready` when nothing started: the assistant is off, Home
+Assistant Voice is not connected yet or already busy, an app is recording or playing voice, the chosen app cannot start,
+with an app as the assistant the clock is speaking, or the clock is still starting. [`blockNavigation`](settings.md) does not stop it.
 
 ```bash
 mosquitto_pub -h broker.local -t 'awtrixNG/cmd/voice/start' -m ''
@@ -582,7 +583,8 @@ not sent again.
 | every HA discovery config, entity state and availability publish | **yes** |
 
 A command you publish may be at most **8192 bytes**, topic included. A larger one is dropped without an error and
-without `/result` – a very long notification is the usual way to hit this. Messages AWTRIX
+without `/result`, and the clock's log names it – a very long notification is the usual way to hit this. A message
+over 64 KiB also makes the clock connect to the broker again. Messages AWTRIX
 publishes *to you* have no such limit: `state/device` and `state/screen` are sent at full size. All
 other limits are in [Limits](limits.md).
 
@@ -702,7 +704,7 @@ These entities are created only when the hardware is there, so none of them stay
 | Charging | `binary_sensor` | `chg` | `state/device` → `usbPower`; `device_class: battery_charging` | always |
 | Knob | `binary_sensor` | `btnk` | `state/buttons/knob` | always |
 | Knob turn | `event` | `knob` | `event/knob`; event types `clockwise` / `counterclockwise`, attribute `steps` | always |
-| Assist | `button` | `assist` | `cmd/voice/start` | Home Assistant Voice is available |
+| Assist | `button` | `assist` | `cmd/voice/start` | the voice assistant is available |
 <!-- /only -->
 <!-- only esp32 -->
 | Volume | `number` | `vol` | `cmd/settings` → `volume`; 0–100, step 5, `%` | the clock has a sound output (buzzer or DFPlayer) |

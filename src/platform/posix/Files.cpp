@@ -1,60 +1,62 @@
 #include "platform/posix/Files.h"
 
+#include <dirent.h>
 #include <fcntl.h>
+#include <sys/file.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <utility>
 
 namespace awtrix {
 namespace posix {
 
-bool readAll(int fd, void* data, std::size_t size) {
-  auto* bytes = static_cast<unsigned char*>(data);
-  while (size) {
-    const ssize_t count = ::read(fd, bytes, size);
+namespace {
+
+template <class Byte, class Transfer>
+bool transferAll(Byte* bytes, std::size_t size, Transfer transfer) {
+  for (std::size_t done = 0; done < size;) {
+    const ssize_t count = transfer(bytes + done, size - done, done);
     if (count < 0 && errno == EINTR) continue;
     if (count <= 0) {
       if (count == 0) errno = EIO;
       return false;
     }
-    bytes += count;
-    size -= static_cast<std::size_t>(count);
+    done += static_cast<std::size_t>(count);
   }
   return true;
+}
+
+}
+
+bool readAll(int fd, void* data, std::size_t size) {
+  return transferAll(static_cast<unsigned char*>(data), size,
+                     [fd](unsigned char* bytes, std::size_t left, std::size_t) { return ::read(fd, bytes, left); });
 }
 
 bool preadAll(int fd, uint64_t offset, void* data, std::size_t size) {
-  auto* bytes = static_cast<unsigned char*>(data);
-  while (size) {
-    const ssize_t count = ::pread(fd, bytes, size, static_cast<off_t>(offset));
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) {
-      if (count == 0) errno = EIO;
-      return false;
-    }
-    bytes += count;
-    offset += static_cast<uint64_t>(count);
-    size -= static_cast<std::size_t>(count);
-  }
-  return true;
+  return transferAll(static_cast<unsigned char*>(data), size,
+                     [fd, offset](unsigned char* bytes, std::size_t left, std::size_t done) {
+                       return ::pread(fd, bytes, left, static_cast<off_t>(offset + done));
+                     });
 }
 
 bool writeAll(int fd, const void* data, std::size_t size) {
-  const auto* bytes = static_cast<const unsigned char*>(data);
-  while (size) {
-    const ssize_t count = ::write(fd, bytes, size);
-    if (count < 0 && errno == EINTR) continue;
-    if (count <= 0) {
-      if (count == 0) errno = EIO;
-      return false;
-    }
-    bytes += count;
-    size -= static_cast<std::size_t>(count);
-  }
-  return true;
+  return transferAll(static_cast<const unsigned char*>(data), size,
+                     [fd](const unsigned char* bytes, std::size_t left, std::size_t) {
+                       return ::write(fd, bytes, left);
+                     });
+}
+
+bool pwriteAll(int fd, uint64_t offset, const void* data, std::size_t size) {
+  return transferAll(static_cast<const unsigned char*>(data), size,
+                     [fd, offset](const unsigned char* bytes, std::size_t left, std::size_t done) {
+                       return ::pwrite(fd, bytes, left, static_cast<off_t>(offset + done));
+                     });
 }
 
 bool readText(const std::string& path, std::string& out, std::size_t maximum) {
@@ -106,6 +108,34 @@ bool readRegularFile(int directory, const std::string& path, std::size_t maximum
   }
   out = std::move(value);
   return true;
+}
+
+MappedFile::MappedFile(const std::string& path, std::size_t maximum) {
+  const UniqueFd fd(::open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK));
+  if (fd.valid()) map(fd.get(), maximum);
+}
+
+MappedFile::MappedFile(int fd, std::size_t maximum) { map(fd, maximum); }
+
+void MappedFile::map(int fd, std::size_t maximum) {
+  struct stat info{};
+  if (::fstat(fd, &info) < 0) return;
+  if (!S_ISREG(info.st_mode) || info.st_size < 0 || uint64_t(info.st_size) > maximum) {
+    errno = EINVAL;
+    return;
+  }
+  const std::size_t size = static_cast<std::size_t>(info.st_size);
+  if (size > 0) {
+    void* const data = ::mmap(nullptr, size, PROT_READ, MAP_PRIVATE, fd, 0);
+    if (data == MAP_FAILED) return;
+    data_ = data;
+    size_ = size;
+  }
+  valid_ = true;
+}
+
+MappedFile::~MappedFile() {
+  if (data_) ::munmap(data_, size_);
 }
 
 bool replaceText(const std::string& path, std::string_view text) {
@@ -176,6 +206,68 @@ UniqueFd openPrivateDirectoryAt(int directory, const std::string& path, bool cre
 
 UniqueFd openPrivateDirectory(const std::string& path, bool create) {
   return openPrivateDirectoryAt(AT_FDCWD, path, create, create);
+}
+
+namespace {
+
+constexpr char kTemporarySuffix[] = "XXXXXX";
+constexpr std::size_t kMaxPidDigits = 9;
+
+void removeRegularFiles(UniqueFd directory) {
+  DIR* listing = ::fdopendir(directory.get());
+  if (!listing) return;
+  directory.release();
+  while (const dirent* entry = ::readdir(listing)) {
+    struct stat info{};
+    if (::fstatat(::dirfd(listing), entry->d_name, &info, AT_SYMLINK_NOFOLLOW) == 0 && S_ISREG(info.st_mode))
+      ::unlinkat(::dirfd(listing), entry->d_name, 0);
+  }
+  ::closedir(listing);
+}
+
+bool temporaryName(std::string_view name, std::string_view prefix) {
+  if (name.size() <= prefix.size() || name.substr(0, prefix.size()) != prefix || name[prefix.size()] != '-')
+    return false;
+  name.remove_prefix(prefix.size() + 1);
+  const std::size_t dash = name.find('-');
+  if (dash == 0 || dash > kMaxPidDigits || name.size() - dash - 1 != sizeof(kTemporarySuffix) - 1) return false;
+  for (const char digit : name.substr(0, dash))
+    if (digit < '0' || digit > '9') return false;
+  return true;
+}
+
+bool hold(int directory) { return ::flock(directory, LOCK_EX | LOCK_NB) == 0; }
+
+}
+
+void removeStaleTemporaryDirectories(const std::string& parent, std::string_view prefix) {
+  DIR* listing = ::opendir(parent.c_str());
+  if (!listing) return;
+  while (const dirent* entry = ::readdir(listing)) {
+    if (!temporaryName(entry->d_name, prefix)) continue;
+    UniqueFd directory = openPrivateDirectoryAt(::dirfd(listing), entry->d_name, false);
+    if (!directory.valid() || !hold(directory.get())) continue;
+    removeRegularFiles(std::move(directory));
+    ::unlinkat(::dirfd(listing), entry->d_name, AT_REMOVEDIR);
+  }
+  ::closedir(listing);
+}
+
+PrivateTemporaryDirectory::PrivateTemporaryDirectory(const std::string& parent, std::string_view prefix) {
+  removeStaleTemporaryDirectories(parent, prefix);
+  std::string pattern =
+      parent + "/" + std::string(prefix) + "-" + std::to_string(::getpid()) + "-" + kTemporarySuffix;
+  if (!::mkdtemp(pattern.data())) return;
+  held_ = openPrivateDirectory(pattern, false);
+  if (held_.valid() && hold(held_.get())) path_ = std::move(pattern);
+  else ::rmdir(pattern.c_str());
+}
+
+PrivateTemporaryDirectory::~PrivateTemporaryDirectory() {
+  if (path_.empty()) return;
+  if (UniqueFd directory = openPrivateDirectory(path_, false); directory.valid())
+    removeRegularFiles(std::move(directory));
+  ::rmdir(path_.c_str());
 }
 
 bool makeDirectories(const std::string& path, unsigned mode) {

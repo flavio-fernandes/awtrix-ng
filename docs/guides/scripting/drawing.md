@@ -150,7 +150,8 @@ unknown name keeps the current font. Which `y` lines up a font with the apps is 
 ## Text that may not fit {#styled-and-scrolling-text}
 
 `scroll_text()` draws a line that moves by itself when it is too long, the way a pushed app's text
-does. It returns how many times the text has run through.
+does. It returns how many times the text has run through. Text that stands still never runs through,
+so the count stays 0.
 
 | Call | Does |
 |---|---|
@@ -276,6 +277,17 @@ end
 
 return News()
 ```
+
+### Wait for one run {#when-the-text-changes}
+
+Text stands still when its lit pixels fit, unless `whenFits` is `"scroll"`, and always when the mode
+is `"static"`, which the clock's own scroll settings can choose too. So before you wait for the count,
+pass `{"mode": "wrap"}` and compare `text_ink_width()` with the width. Nothing is drawn while the
+display is off, so give the wait a time limit as well.
+
+A new text with another width in pixels starts over, and the count goes back to 0. A new text of
+exactly the same width carries on from the same position and keeps the count. So to wait for one
+run of each new text, remember the count when the text changes, and compare with that.
 
 ### How the text moves {#scroll-options}
 

@@ -221,6 +221,39 @@ test('identity, manifests, file modes and roles must agree', async () => {
   }
 });
 
+// Changes the bundle's file list and renames the release to match, as a real build of those files would.
+function withBundleFiles(transform) {
+  const entries = files();
+  let release;
+  metadata(entries, 'bundle/manifest.json', value => {
+    transform(value.files);
+    const identity = value.files.map(entry => `${entry.path} ${entry.mode} ${entry.sha256}\n`).join('');
+    value.release = release = `${value.version}-${sha(identity).slice(0, 12)}`;
+  });
+  metadata(entries, outerName, value => { value.release = release; });
+  return pack(entries);
+}
+
+test('a file of the release image that the installer does not know still installs', async () => {
+  const { parsePackage } = await parser;
+  const added = { path: 'share/new/thing.bin', size: 1, sha256: 'd'.repeat(64), mode: '0755' };
+  const data = withBundleFiles(list => {
+    list.push(added);
+    list.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+  });
+  assert.equal(Buffer.from((await parsePackage(data)).helper).toString(), 'bin/awtrix-tc002-flash\n'.repeat(3));
+  const gone = withBundleFiles(list => { list.splice(list.findIndex(file => file.path === 'share/wake/hey_awtrix.json'), 1); });
+  await parsePackage(gone);
+});
+
+test('the bundle must list what the installer uses, with safe and sorted paths', async () => {
+  const remove = name => list => { list.splice(list.findIndex(file => file.path === name), 1); };
+  await reject(withBundleFiles(remove('bin/awtrix-tc002-flash')), /bundle file list differs/);
+  await reject(withBundleFiles(list => { list[0].path = '../private'; }), /bundle file list differs/);
+  await reject(withBundleFiles(list => { list.reverse(); }), /bundle file list differs/);
+  await reject(withBundleFiles(list => { list.push({ ...list[list.length - 1] }); }), /bundle file list differs/);
+});
+
 test('the release image must match both manifests and be a squashfs release image', async () => {
   const inconsistent = files();
   change(inconsistent, imageName, data => Buffer.concat([data, Buffer.alloc(1)]));

@@ -9,6 +9,7 @@
 #include "core/api/JsonText.h"
 #include "core/api/JsonWriter.h"
 #include "core/render/Color.h"
+#include "core/render/TextEncoding.h"
 #include "core/script/ScriptHeap.h"
 #include "core/script/ScriptMeta.h"
 
@@ -68,11 +69,13 @@ std::string firstOption(const std::string& list) {
   return comma == std::string::npos ? list : list.substr(0, comma);
 }
 
-enum class Attr : uint8_t { Default, Help, Unit, Options, Min, Max, Step, MaxLen, Group, Unknown };
+enum class Attr : uint8_t {
+  Default, Help, Unit, Options, Min, Max, Step, MaxLen, Group, Hint, Unknown
+};
 
 Attr attrOf(const std::string& name) {
-  static constexpr const char* kNames[] = {"default", "help",  "unit", "options",
-                                           "min",     "max",   "step", "maxlen", "group"};
+  static constexpr const char* kNames[] = {"default", "help", "unit",   "options", "min",
+                                           "max",     "step", "maxlen", "group",   "hint"};
   for (std::size_t i = 0; i < sizeof(kNames) / sizeof(kNames[0]); ++i)
     if (ieq(name, kNames[i])) return static_cast<Attr>(i);
   return Attr::Unknown;
@@ -157,7 +160,7 @@ std::string colorJson(uint32_t v) {
 }
 
 void clip(std::string& s, std::size_t limit) {
-  if (s.size() > limit) s.resize(limit);
+  s.resize(text::clipCodepoints(s, limit).size());
 }
 
 std::string splitOptions(const std::string& value) {
@@ -226,7 +229,7 @@ bool coerce(const ConfigField& f, const JsonReader& r, std::string& out, std::st
       std::string s;
       if (!r.isString() || !r.appendString(s)) { why = "expected a string"; return false; }
       const std::size_t limit = f.maxLen ? f.maxLen : kMaxTextLen;
-      if (s.size() > limit) {
+      if (text::codepoints(s) > limit) {
         why = "longer than ";
         api::appendInt(why, static_cast<long long>(limit));
         why += " characters";
@@ -404,6 +407,10 @@ void parseLine(const std::string& value, int line, ConfigSchema& schema) {
         f.group = attr;
         clip(f.group, kMaxLabelLen);
         break;
+      case Attr::Hint:
+        f.hint = attr;
+        clip(f.hint, kMaxLabelLen);
+        break;
       case Attr::Options:
         f.options = splitOptions(attr);
         break;
@@ -564,6 +571,7 @@ bool appendConfigJson(std::string& out, const std::string& name, const ConfigSch
     if (!f.help.empty()) w.member("help", f.help);
     if (!f.unit.empty()) w.member("unit", f.unit);
     if (!f.group.empty()) w.member("group", f.group);
+    if (!f.hint.empty()) w.member("hint", f.hint);
     if (f.hasMin) w.member("min", f.min);
     if (f.hasMax) w.member("max", f.max);
     if (f.step != 0) w.member("step", f.step);

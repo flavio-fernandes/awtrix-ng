@@ -13,7 +13,7 @@ namespace {
 class ModelUtterance final : public SpeechUtterance {
  public:
   ModelUtterance(std::shared_ptr<const SpeechModel> model, const Plan& plan, const std::vector<Chunk>& chunks)
-      : model_(std::move(model)), scratch_(*model_), acoustic_(*model_, scratch_),
+      : model_(std::move(model)), hold_(*model_), scratch_(*model_), acoustic_(*model_, scratch_),
         vocoder_(*model_, scratch_, acoustic_.maxFrames()), mel_(acoustic_.maxFrames() * model_->mels),
         samples_(vocoder_.maxSamples()), tokens_(plan.count + chunks.size()) {
     offsets_.push_back(0);
@@ -52,6 +52,7 @@ class ModelUtterance final : public SpeechUtterance {
   }
 
   const std::shared_ptr<const SpeechModel> model_;
+  const SpeechModel::Hold hold_;
   SpeechScratch scratch_;
   AcousticStream acoustic_;
   VocoderStream vocoder_;
@@ -69,8 +70,22 @@ class ModelUtterance final : public SpeechUtterance {
 
 }
 
+std::shared_ptr<ModelVoice> ModelVoice::create(std::shared_ptr<const SpeechModel> model, std::string& error) {
+  if (!model || model->frontendText.empty()) {
+    error = "not a voice pack";
+    return nullptr;
+  }
+  auto frontend = Frontend::parse(model->frontendText, model->frontendLexicon, error);
+  if (!frontend) return nullptr;
+  if (frontend->phoneCount() != model->phoneCount) {
+    error = "the frontend's phones do not match the model";
+    return nullptr;
+  }
+  return std::shared_ptr<ModelVoice>(new ModelVoice(std::move(model), std::move(frontend)));
+}
+
 std::unique_ptr<SpeechUtterance> ModelVoice::start(const Plan& plan) {
-  if (!plan.count || !tokenizable(plan)) return nullptr;
+  if (!plan.count || !tokenizable(plan, model_->phoneCount)) return nullptr;
   std::vector<Chunk> chunks;
   splitPlan(plan, chunks);
   return std::make_unique<ModelUtterance>(model_, plan, chunks);

@@ -1,4 +1,5 @@
 #include "../support.h"
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -6,6 +7,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
+#include <memory>
 #include <thread>
 
 #include "platform/linux/host/vendor/httplib.h"
@@ -46,6 +49,10 @@ int main() {
     r.status = request.get_header_value("X-Test") == "sent" ? 201 : 400;
     r.set_content(request.body, "text/plain");
   });
+  server.Get("/agent", [](const auto& request, auto& r) {
+    r.set_content(std::to_string(request.get_header_value_count("User-Agent")) + " " +
+                      request.get_header_value("User-Agent"), "text/plain");
+  });
   server.Get("/wire-limit", [](const auto&, auto& r) {
     r.set_content(std::string(1024 * 1024, 'z'), "text/plain");
   });
@@ -53,6 +60,7 @@ int main() {
     r.set_content(std::string(1024 * 1024 + 1, 'z'), "text/plain");
   });
   server.Get("/missing", [](const auto&, auto& r) { r.status = 404; });
+  server.Get("/nothing", [](const auto&, auto& r) { r.status = 204; });
   server.Get("/redirect", [](const auto&, auto& r) { r.set_redirect("/small"); });
   server.Get("/slow", [&](const auto&, auto& r) {
     entered = true;
@@ -85,9 +93,94 @@ int main() {
   response = awtrix::net::send(client, "GET", "/small", "", {},
                               [](const char*, std::size_t) { return false; });
   check(!response, "receiver refusal stops the sender");
+  const awtrix::posix::UniqueFd full(::open("/dev/full", O_WRONLY | O_CLOEXEC));
+  awtrix::test::require(full.valid(), "the full device");
+  const std::function<bool(std::size_t)> anyRoom;
+  awtrix::net::RoomWatch watch(anyRoom);
+  check(watch.fits(1) && !watch.noRoom() && !watch.write(full.get(), "x", 1) && watch.noRoom(),
+        "a file system that is full counts as no room");
+  awtrix::net::RoomWatch broken(anyRoom);
+  check(!broken.write(-1, "x", 1) && !broken.noRoom(), "any other write failure does not");
+  std::string agent;
+  const auto collect = [&](const char* bytes, std::size_t count) { agent.append(bytes, count); return true; };
+  response = awtrix::net::send(client, "GET", "/agent", "", {}, collect);
+  check(response && agent == "1 AWTRIX-NG", "sender names the clock as User-Agent");
+  agent.clear();
+  response = awtrix::net::send(client, "GET", "/agent", "", {{"user-agent", "Script/1"}}, collect);
+  check(response && agent == "1 Script/1", "a caller's User-Agent replaces the default");
+  awtrix::net::ResponseState state;
+  const awtrix::net::BodyPolicy upTo12{12, {}, {}}, upTo11{11, {}, {}};
+  received = 0;
+  response = awtrix::net::exchange(client, "GET", "/small", "", {}, upTo12, state, receive);
+  check(response && state.status == 200 && state.contentType == "audio/wav" && state.receivedBytes == 12 && !state.tooLarge && received == 12,
+        "exchange reports status, type and sizes and accepts its exact limit");
+  received = 0;
+  response = awtrix::net::exchange(client, "GET", "/small", "", {}, upTo11, state, receive);
+  check(!response && state.tooLarge && state.status == 200 && received == 0,
+        "an announced size above the limit stops before the body");
+  received = 0;
+  response = awtrix::net::exchange(client, "GET", "/chunked", "", {}, {8192, {}, {}}, state, receive);
+  check(!response && state.tooLarge && received <= 8192, "a chunked body stops at the limit");
+  echoed.clear();
+  response = awtrix::net::exchange(client, "POST", "/echo", "x", {{"X-Test", "sent"}}, {64, {}, {}}, state,
+                                   [&](const char* bytes, std::size_t count) {
+    echoed.append(bytes, count);
+    return true;
+  });
+  check(response && state.status == 201 && state.contentType.rfind("text/plain", 0) == 0 && echoed == "x",
+        "exchange sends any method with headers and body");
+  const std::string mappedPath = "/tmp/file-download-body-" + std::to_string(::getpid());
+  check(awtrix::posix::replaceText(mappedPath, std::string(100 * 1024, 'm')), "a file for the body");
+  const auto mapped = std::make_shared<const awtrix::posix::MappedFile>(mappedPath, 100 * 1024);
+  ::unlink(mappedPath.c_str());
+  echoed.clear();
+  response = awtrix::net::exchange(client, "POST", "/echo", awtrix::net::RequestBody("head-", mapped, "-tail"),
+                                   {{"X-Test", "sent"}}, {256 * 1024, {}, {}}, state,
+                                   [&](const char* bytes, std::size_t count) {
+    echoed.append(bytes, count);
+    return true;
+  });
+  check(response && state.status == 201 && echoed == "head-" + std::string(100 * 1024, 'm') + "-tail",
+        "a body around a mapped file goes out streamed, in order");
+  received = 0;
+  std::string judged;
+  const awtrix::net::BodyPolicy htmlOnly{64, [&](int status, const std::string& type) {
+    judged = std::to_string(status) + " " + type;
+    return type == "text/html";
+  }, {}};
+  response = awtrix::net::exchange(client, "GET", "/missing", "", {}, htmlOnly, state, receive);
+  check(!response && judged.rfind("404 ", 0) == 0 && state.status == 404 && !state.tooLarge,
+        "the accept hook sees the status before the body");
+  response = awtrix::net::exchange(client, "GET", "/small", "", {}, htmlOnly, state, receive);
+  check(!response && judged == "200 audio/wav" && state.status == 200 && received == 0 && !state.tooLarge,
+        "and a refused type stops the exchange before the body");
+  std::size_t roomAsked = 0;
+  const awtrix::net::BodyPolicy noRoom{64, {}, [&](std::size_t more) {
+    roomAsked += more;
+    return false;
+  }};
+  response = awtrix::net::exchange(client, "GET", "/small", "", {}, noRoom, state, receive);
+  check(!response && roomAsked == 12 && received == 0 && !state.tooLarge,
+        "the room check sees the announced size before the body");
+  response = awtrix::net::exchange(client, "HEAD", "/small", "", {}, {64, {}, {}}, state, receive);
+  check(response && state.status == 200 && state.contentType == "audio/wav" && state.receivedBytes == 0,
+        "a HEAD answer still names its status and type");
+  response = awtrix::net::exchange(client, "GET", "/nothing", "", {}, {64, {}, {}}, state, receive);
+  check(response && state.status == 204, "a 204 answer still names its status");
+  awtrix::net::FilteredAnswer answer = awtrix::net::sendFiltered(
+      client, "POST", "/echo", "{\"a\":1,\"text\":\"hi\"}", {{"X-Test", "sent"}}, {"\"text\":", 11, 8192});
+  check(answer.status == 201 && answer.ok && answer.body == "\"text\":\"hi\"",
+        "the filtered sender keeps the window after the needle: " + answer.body);
+  answer = awtrix::net::sendFiltered(client, "POST", "/echo", "plain", {{"X-Test", "sent"}}, {"\"text\":", 11, 8192});
+  check(answer.status == 201 && !answer.ok && answer.body.empty(), "an answer without the needle keeps nothing");
+  answer = awtrix::net::sendFiltered(client, "GET", "/wire-overflow", "", {}, {"", 0, 8192});
+  check(answer.status == 0 && !answer.ok, "an answer past the wire limit is a network failure");
 
   awtrix::net::HttpGet get;
   std::string bytes;
+  check(get.fetch(origin + "/agent", {64, 15000, false}, bytes).failure ==
+            awtrix::net::HttpGet::Failure::None && bytes == "1 AWTRIX-NG",
+        "bounded fetch names the clock as User-Agent");
   check(get.fetch(origin + "/small", {12, 15000, false}, bytes).failure ==
             awtrix::net::HttpGet::Failure::None && bytes == "speech-bytes",
         "bounded memory receiver accepts its exact boundary");

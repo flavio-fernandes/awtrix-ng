@@ -55,6 +55,9 @@ HOST_ONLY = ("lib/libawtrix-loader.so", "lib/modules/loop.ko")
 MCU_PATCH = frozenset(("share/mcu/manifest.json", "share/mcu/extension.bin", "share/mcu/LICENSE.txt"))
 # The voice that reads speech aloud; a release without it has no speech.
 SPEECH_VOICE = "share/speech/voice.atts"
+WAKE_WORD = frozenset(("share/wake/hey_awtrix.tflite", "share/wake/hey_awtrix.json"))
+VAD = frozenset(("share/vad/vad.tflite", "share/vad/vad.json", "share/vad/NOTICE"))
+OPTIONAL_GROUPS = ((MCU_PATCH, "MCU patch"), (WAKE_WORD, "wake word"), (VAD, "voice activity model"))
 EXECUTABLE_DIRS = ("bin",)
 # A path component and a release directory name: src/platform/tc002/contract/ReleaseName.h.
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,63}")
@@ -97,10 +100,11 @@ def public_files(paths):
     """Exact public layout, retaining support for releases before local MCU patching."""
     paths = set(paths)
     expected = {*REQUIRED, *HOST_ONLY, "share/boot.mp3", *(paths & {SPEECH_VOICE})}
-    if paths & MCU_PATCH:
-        if not MCU_PATCH <= paths:
-            raise BundleError('incomplete MCU patch')
-        expected |= MCU_PATCH
+    for group, label in OPTIONAL_GROUPS:
+        if paths & group:
+            if not group <= paths:
+                raise BundleError(f'incomplete {label}')
+            expected |= group
     if paths != expected:
         raise BundleError('bundle differs from public file allowlist')
     return expected

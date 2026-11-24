@@ -64,6 +64,8 @@ first answer arrives, it shows `...`.
   only paints it.
 - **`loop()` runs about once a second, also while your app is hidden.** Start requests there,
   spaced out with a counter, so the data is ready when your app comes round.
+- **Requests take turns.** All scripts share one queue, and a request runs when the one before it
+  has finished. So a slow service also delays the requests of every other script.<!-- only tc002 --> Requests with `timeout` have a queue of their own.<!-- /only -->
 - **MQTT works the same way.** `mqtt.subscribe()` returns at once, and your callback runs for
   every message.
 
@@ -104,10 +106,171 @@ body. [Details](#http-calls) lists every method.
 <!-- only tc002 -->
     Outbound HTTPS checks the certificate and host name. An untrusted or mismatched certificate
     fails the request.
+
+    On this clock a key does not have to be in the script: see
+    [Keep an API key out of your script](#api-keys).
 <!-- /only -->
 
     So: set a login, and use a token that can only read what the script needs and that you can
     revoke on its own.
+
+<!-- only tc002 -->
+## Keep an API key out of your script {#api-keys}
+
+With `@secret`, a key stays out of your script. The user enters it in the app's settings, and the
+clock puts it into your request at the last moment. Your script never sees it, and reading the
+script does not reveal it.
+
+```berry
+# @name    Quote
+# @desc    Shows a quote from a service that wants a key
+# @version 1.0
+# @needs   secret
+# @secret  key label="API key" help="Your key from example.com" hosts=api.example.com
+
+import secret
+
+class Quote
+  var label, ticks
+
+  def init()
+    self.label = "..."
+    self.ticks = 0
+  end
+
+  def loop()
+    if !secret.has('key')
+      self.label = "NO KEY"
+      return
+    end
+    if self.ticks <= 0
+      self.ticks = 300
+      http.get("https://api.example.com/v1/quote", / body, status -> self.on_body(body, status),
+               {'headers': {'Authorization': "Bearer {secret:key}"},
+                'find': "\"price\":", 'keep': 32})
+    end
+    self.ticks -= 1
+  end
+
+  def on_body(body, status)
+    if status == 401
+      self.label = "BAD KEY"
+      return
+    end
+    var found = body != nil ? re.search("\"price\":([0-9.]+)", body) : nil
+    if found != nil self.label = found[1] end
+  end
+
+  def draw()
+    clear()
+    scroll_text(self.label)
+  end
+end
+
+return Quote()
+```
+
+The field appears under [**API keys**](../../getting-started/web-ui.md#api-keys) in the app's
+settings. Until the user fills it, `secret.has('key')` is `false`.
+
+Add `# @needs secret` as well, so other models show the script as not suitable: an `@secret` line
+alone does not ask for anything. On other models the line is ignored and `{secret:key}` goes out as
+plain text, so a script for every model has to check for the module first. See
+[Scripts for every model](../ble.md#scripts-for-every-model).
+
+### The line
+
+`# @secret <key> hosts=a,b label="…" help="…"`, one line per key, at most 4 in a script. The key and
+`hosts` are required. A line without `hosts` is invalid, and the settings show why.
+
+| Part | Meaning |
+|---|---|
+| `key` | the name your script uses, as for [`@config`](storage.md#settings-the-user-can-change): a letter or `_` first, then letters, digits and `_`, at most 24 characters |
+| `hosts` | the only hosts the key may go to, 1 to 8, separated by commas: names, IPv4 addresses or IPv6 addresses in brackets, exactly as in the address, for example `api.example.com`, `192.168.1.20` or `[fd00::1]`. The port does not count |
+| `label` | the name of the field, at most 48 characters. Without one, the key is shown |
+| `help` | a line of explanation under the field, at most 96 characters |
+
+### Where `{secret:key}` works
+
+Write `{secret:key}` in a header value, in the path or query of the address, or in a text body. In
+the address, the clock percent-encodes the value. In a header and in a body, the value goes in as it
+is.
+
+```berry
+http.get("https://api.example.com/v1/quote?token={secret:key}", / body, status -> self.on_body(body, status))
+http.post("https://api.example.com/v1/quote", '{"token":"{secret:key}"}', / body, status -> self.on_body(body, status))
+```
+
+It works in `http.*`, and in [`voice.send` and `voice.fetch`](../voice-scripts.md), there not in a clip
+or a form field. Everywhere else, it is plain text: in a header name, and in any other module.
+
+The clock looks through the whole body. If text you pass on, for example an answer from a chat
+service, holds `{secret:key}`, the clock fills it in. With an unknown key, it refuses the request.
+
+### Where a key may go {#where-a-key-may-go}
+
+| Address | The key goes there |
+|---|---|
+| `https://` to a host `hosts=` lists | yes |
+| `http://` to a listed host in your own network | yes |
+| `http://` to any other listed host | never |
+| a host `hosts=` does not list | never, also with `https://` |
+
+Your own network means an IPv4 address in `10.x.x.x`, `172.16.x.x` to `172.31.x.x`, `192.168.x.x`,
+`127.x.x.x` or `169.254.x.x`, the IPv6 addresses `[::1]`, `fc00::/7` and `fe80::/10`, and a name
+ending in `.local`. The clock judges the address as you wrote it and looks nothing up, so
+`http://localhost` and `http://nas.fritz.box` do not count. Write an IP address or a `.local` name
+instead.
+
+Nothing is sent when the clock refuses a key: the key is unknown or not filled in, or the address is
+not allowed. Your callback gets `nil` and status `0`, as without a network. The log shows the reason
+while [`debugMode`](../../reference/system.md#miscellaneous) is on. [Limits](../../reference/limits.md#api-keys)
+says what a placeholder does anywhere else in an address.
+
+Once a key is in a request, the request follows no redirect. The answer is then the redirect itself,
+with its status, for example 302. Send such a request straight to the final address.
+
+### Ask about a key
+
+`import secret` gives two calls:
+
+| Call | Does |
+|---|---|
+| `secret.has(key)` | `true` when the key is declared and filled in, otherwise `false` |
+| `secret.allows(key, url)` | `true` when the key is declared and filled in and may go to this address, otherwise `false`, also when `key` or `url` is not a text |
+
+Send the header only when the key may go to the address, and the same app also works with a service
+that wants no key. With one key per service, ask for each key, and send the one that fits. This is how
+[Lumen Assistant](../voice.md#lumen-assistant) picks its key, and how it talks to a local server:
+
+```berry
+var headers = {}
+if secret.allows('key', url) headers['Authorization'] = "Bearer {secret:key}" end
+```
+
+### How long a key stays
+
+A key stays until the user removes it, the app is deleted, the clock is reset, or the header changes:
+
+- A changed `hosts=` erases the key, so nobody can send it to a new host by updating the script. To
+  use a key with another host, change `hosts=` in the app's code and enter the key again.
+- A key whose line disappears is erased.
+- A mistake in any `@secret` line, also a missing `hosts=`, erases all keys of the app when you save
+  it. The settings show the mistake.
+- A new `label` or `help` keeps the key.
+
+A key is not part of a backup.
+
+### Who can reach a key
+
+A key is protected from others on the network: nobody can read it back, and the clock sends it only
+where the rules above allow. It is not fully protected from other apps you install, because all
+scripts run together on the clock, so install only scripts you trust.
+
+Without a [web login](../../reference/http.md#authentication), any web page opened in a browser on the
+same network can change scripts and app settings on the clock, and with that reach API keys and the
+microphone. Set a login.
+<!-- /only -->
 
 ## Pick one field out of a big answer {#picking-one-field-out-of-a-big-answer}
 
@@ -299,8 +462,7 @@ symbols the display can draw. Both run once per fetch, never per frame.
 
 Four habits worth copying:
 
-- **One `nil` check covers every network failure:** offline, refused, or no answer within 30
-  seconds. The checks after it catch an answer that is not the JSON you expect. This API needs no
+- **One `nil` check covers every network failure:** offline, refused, or no answer in time. The checks after it catch an answer that is not the JSON you expect. This API needs no
   login, so `status` is not checked. A script with a token would check it.
 - **`find()` instead of `[]`**, because `[]` raises on a missing key. If the API changes, your app
   should not break.
@@ -429,8 +591,10 @@ Select fetches again on the next `loop()`. Left and right switch apps as usual. 
 | `http.patch(url, body, cb, opts?)` | sends `body` with `PATCH` |
 | `http.delete(url, cb, opts?)` | sends `DELETE` |
 | `http.request(method, url, cb, opts?)` | sends any method. `opts` may carry `body` |
+| `http.cancel(id)` | ends a request of your script and answers `true`, or `false` when it has already ended |
 
-Each call returns at once. `cb(body, status)` runs once, later. `opts` is an optional map:
+Each call returns at once, with an id for `http.cancel()`, or `nil` when the request cannot be sent.
+`cb(body, status)` runs once, later. `opts` is an optional map:
 
 | Key | Value | Meaning |
 |---|---|---|
@@ -439,9 +603,13 @@ Each call returns at once. `cb(body, status)` runs once, later. `opts` is an opt
 | `keep` | bytes, `256` by default | how much is kept from the match on. `cap` can make it smaller, not larger |
 | `cap` | bytes, 8 KB by default | the most of the answer that is kept |
 | `body` | text | the request body of `http.request()` |
+| `timeout` | whole seconds, <!-- only esp32 esp32-s3 -->1–60<!-- /only --><!-- only tc002 -->1–120<!-- /only --> | how long the whole request may take, also while it waits for the first byte |
 
 - AWTRIX sets `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` itself and ignores
   them in your headers. All other headers are yours.
+- Every request names itself with `User-Agent: AWTRIX-NG`. Some APIs, for example GitHub's, refuse
+  a request without a `User-Agent`. If an API wants your app's name or a contact address there,
+  put your own `User-Agent` in `headers`. It replaces `AWTRIX-NG`.
 - A large `cap` only works when the device has that much memory free. If memory runs out while the
   answer is still arriving, the whole answer is dropped: your callback gets `(nil, status)` with
   the real status code. So do not rely on a big `cap`. Use `find`.
@@ -451,17 +619,37 @@ Each call returns at once. `cb(body, status)` runs once, later. `opts` is an opt
 - **Any real answer, including 4xx and 5xx,** reaches your callback with its `body`. That is where
   an API explains what went wrong.
 - **No answer:** no Wi-Fi, an unknown host, a refused connection, too many requests at once, or no
-  answer within 30 seconds. `status` is `0` and `body` is `nil`.
-- **A request that cannot be sent**, with an unknown method or a malformed header, gets
-  `cb(nil, 0)` at once, like a network error.
+  answer in time. `status` is `0` and `body` is `nil`.
+- **A request that cannot be sent**, with an unknown method, a malformed header or a `timeout` out of
+  range, gets `cb(nil, 0)` at once, like a network error.
 - **`find` text that never comes** gives `(nil, status)` with the real status code, so you can tell
   it from a network failure.
+- **`http.cancel(id)`** runs your callback with `(nil, 0)` before it returns. When your app ends, its
+  open requests end too, without a callback.
 - Only `http://` and `https://` addresses work.
 - An answer is kept up to 8 KB, or up to `cap` if you set one. It is less when the device is short
   of free memory.
-- Each script can have **8 requests** open at once.
+- Each script can have **8 requests** open at once. They run one after another, together with those
+  of all other scripts. A request that has waited 30 seconds is not sent, and your callback gets
+  `(nil, 0)`.
 - `GET` follows redirects. A `POST` or `PUT` does not follow them reliably.
+- An answer has to start within 5 seconds, unless you set `timeout`. A service that thinks longer,
+  for example a chat model, needs it.
+<!-- only tc002 -->
+- Requests with `timeout` run one after another in a queue of their own, so they delay no request
+  without one. End a question you no longer need with `http.cancel()`, or the next one waits behind
+  it.
+- `timeout` does not cover looking up the name of the service. A name server that does not answer
+  holds this request and those behind it.
+<!-- /only -->
 <!-- only esp32 esp32-s3 -->
+- A request with `timeout` holds up the requests of all other scripts for as long as it waits, and
+  those that wait 30 seconds fail. An `https://` request keeps its memory that long. Use it only for
+  a service that needs it.
+- `timeout` starts before the clock connects, but connecting is not cut short. It can take 5 seconds
+  and more, so a very short `timeout` takes that long too.
+- `http.cancel()` stops a running request. One still waiting for its turn is sent anyway, and its
+  answer is dropped.
 - For about 15 seconds after the clock joins Wi-Fi, `https://` requests wait, then run. The first
   result simply arrives a few seconds later. When memory is too tight for HTTPS, the request is
   retried for about 20 seconds before your callback gets a failure.
@@ -508,6 +696,7 @@ Every limit a script runs under is in [Limits](../../reference/limits.md#scripti
 <!-- only tc002 -->
 - [TCP in scripts](../tcp.md): services that send text line by line
 - [Signing in from scripts](../oauth.md): services that need a sign-in
+- [Voice in scripts](../voice-scripts.md): record, send and play voice, and ask slow services
 <!-- /only -->
 - [MQTT](../mqtt.md): AWTRIX's own topics
 - [Tutorial 3: Feed it real data](../../tutorials/real-data.md): a weather forecast, step by step

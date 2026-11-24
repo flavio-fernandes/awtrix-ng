@@ -99,6 +99,7 @@ struct DeviceConfig : PlatformConfig {
   bool save() const;
   void write(api::JsonWriter& w, bool withSecrets = false) const;
   int applyRead(api::JsonReader r);
+  void refreshTzRule();
 
   MatrixLayout matrixLayout() const {
     MatrixLayout l;

@@ -199,10 +199,18 @@ class BoardSelectionContract(unittest.TestCase):
                 self.assertIn(message, result.stdout)
                 self.assertFalse((self.root / "data").exists())
 
-    def test_speech_voice_comes_with_the_speaker(self):
+    def test_speech_voice_wake_word_and_vad_come_with_the_speaker(self):
         for arguments, message in ((("--board", "tc002", "--speech-voice", "/tmp/voice.atts"),
                                     "--speech-voice requires --tc002-audio-fd"),
                                    (("--speech-voice", "a.atts", "--speech-voice", "b.atts"),
+                                    "awtrix-linux --data DIRECTORY"),
+                                   (("--board", "tc002", "--wake-word", "/tmp/hey_awtrix.tflite"),
+                                    "--wake-word requires --tc002-audio-fd"),
+                                   (("--wake-word", "a.tflite", "--wake-word", "b.tflite"),
+                                    "awtrix-linux --data DIRECTORY"),
+                                   (("--board", "tc002", "--vad", "/tmp/vad.tflite"),
+                                    "--vad requires --tc002-audio-fd"),
+                                   (("--vad", "a.tflite", "--vad", "b.tflite"),
                                     "awtrix-linux --data DIRECTORY")):
             with self.subTest(arguments=arguments):
                 result = self.run_board(*arguments)
@@ -1059,6 +1067,26 @@ return Probe()
         self.assertEqual(["boost.mp3"],
                          [f["name"] for f in app.json("GET", "/api/v1/apps/script/racer/sounds")["files"]])
 
+    def test_restore_brings_radio_stations_back_at_once(self):
+        app = self.app
+        stations = {"stations": [{"name": "Restored", "url": "https://example.invalid/restored"}]}
+        status, result = self.multipart_upload(app, "/api/v1/restore", "backup.zip",
+                                               self.backup_bytes([("radio.json", json.dumps(stations))]))
+        self.assertEqual(200, status, result)
+        self.assertEqual((1, 0), (result["applied"]["radioStations"], result["applied"]["skipped"]))
+        self.assertEqual(stations, app.json("GET", "/api/v1/audio/stations"))
+
+        bad = {"stations": [{"name": "No URL", "url": "ftp://example.invalid/x"}]}
+        status, result = self.multipart_upload(app, "/api/v1/restore", "backup.zip",
+                                               self.backup_bytes([("radio.json", json.dumps(bad))]))
+        self.assertEqual(200, status, result)
+        self.assertEqual((0, 1), (result["applied"]["radioStations"], result["applied"]["skipped"]))
+        self.assertIn("radio stations not applied", result["warnings"][0])
+        self.assertEqual(stations, app.json("GET", "/api/v1/audio/stations"))
+        app.stop()
+        app.start()
+        self.assertEqual(stations, app.json("GET", "/api/v1/audio/stations"))
+
     def test_body_over_the_ceiling_gets_the_documented_error(self):
         app = self.app
         status, error = self.multipart_upload(app, "/api/v1/audio/mp3", "large.mp3",
@@ -1252,6 +1280,54 @@ return Fetch()
         self.assertIs(result["get"], True)
         self.assertIs(result["post"], True)
         self.assertEqual([], posted)
+
+    def test_http_timeout_sets_the_wait(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                time.sleep(6)
+                body = b"late"
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = f"http://127.0.0.1:{server.server_port}/"
+        self.app.install("timeoutcontract", f'''# @headless true
+class Fetch
+ var sent
+ def init() self.sent = false end
+ def loop()
+  if self.sent return end
+  self.sent = true
+  http.post("{url}", "x", /body,status -> shared.set("plain", status), nil)
+  var dropped = http.post("{url}", "x", /body,status -> shared.set("cancelled", status), {{'timeout': 8}})
+  http.cancel(dropped)
+  http.post("{url}", "x", /body,status -> shared.set("patient", body), {{'timeout': 8}})
+  http.post("{url}", "x", /body,status -> shared.set("toolong", status), {{'timeout': 121}})
+  http.post("{url}", "x", /body,status -> shared.set("zero", status), {{'timeout': 0}})
+ end
+end
+return Fetch()
+''')
+
+        def values():
+            return {row["key"]: row["value"] for row in
+                    self.app.json("GET", "/api/v1/scripts/shared") if row["owner"] == "timeoutcontract"}
+        result = eventually(values, lambda v: {"plain", "patient", "toolong", "zero", "cancelled"} <= v.keys(),
+                            timeout=15)
+        self.assertEqual(0, result["plain"])
+        self.assertEqual("late", result["patient"])
+        self.assertEqual(0, result["toolong"])
+        self.assertEqual(0, result["zero"])
+        self.assertEqual(0, result["cancelled"])
 
     def test_http_client_and_self_signed_tls_rejection(self):
         openssl = self.tool("openssl", OPTIONS.require_tls)

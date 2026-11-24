@@ -121,8 +121,16 @@ bool ScriptHost::HttpAdapter::request(const HttpRequest& req) {
 
   if (!h->svc_.http->request(req)) return false;
   const int64_t now = h->svc_.monotonicMs ? h->svc_.monotonicMs() : 0;
-  h->httpOwner_[req.id] = HttpOwner{owner, now + kHttpTimeoutMs};
+  h->httpOwner_[req.id] = HttpOwner{owner, now + kHttpTimeoutMs + int64_t{req.timeoutSec} * 1000, req.timeoutSec != 0};
   return true;
+}
+
+void ScriptHost::HttpAdapter::cancel(uint32_t id) {
+  ScriptHost* h = host_;
+  const auto it = h->httpOwner_.find(id);
+  if (it == h->httpOwner_.end() || it->second.script != BindingScope::currentScript()) return;
+  h->httpOwner_.erase(it);
+  if (h->svc_.http) h->svc_.http->cancel(id);
 }
 
 void ScriptHost::MqttAdapter::publish(const std::string& topic, const std::string& payload) {
@@ -182,7 +190,7 @@ void ScriptHost::clearRefusal() {
 // Installs or replaces a script, app or module alike. False means the install was refused
 // (see lastRefusal()); a script that compiles and then throws still counts as installed.
 // An @ondemand app is only compiled here and gets its instance from launch(); saving one that
-// is running rebuilds it like any other app.
+// is running rebuilds it like any other app. A switched-off app is only compiled as well.
 bool ScriptHost::set(const std::string& name, const std::string& source,
                      const std::string& storeJson) {
   if (name.empty()) return false;
@@ -198,7 +206,8 @@ bool ScriptHost::set(const std::string& name, const std::string& source,
   }
 
   const bool launched = isOnDemand(name) && apps_.count(name) != 0;
-  const bool dormant = meta.onDemand && !launched;
+  const bool parked = !meta.module && !meta.onDemand && switchedOff(name);
+  const bool dormant = (meta.onDemand && !launched) || parked;
   const auto replaced = apps_.find(name);
   const bool wasShown = replaced != apps_.end() && replaced->second->visible();
   if (replaced != apps_.end()) replaced->second->releaseIcons();
@@ -242,7 +251,7 @@ bool ScriptHost::set(const std::string& name, const std::string& source,
   }
 
   if (dormant) {
-    installDormant(name, meta, source, wasApp, std::move(dormantError));
+    installDormant(name, meta, source, wasApp, std::move(dormantError), parked);
   } else {
     std::string seeded;
     instantiate(name, meta, source, seededStore(meta, source, storeJson, seeded));
@@ -265,6 +274,12 @@ bool ScriptHost::launch(const std::string& name) {
     return false;
   }
   if (apps_.count(name)) return true;
+  return start(name, meta->second.parsed);
+}
+
+// Builds the instance of an installed app that has none, from its stored source and store.
+bool ScriptHost::start(const std::string& name, const ScriptMeta& parsed) {
+  const ScriptMeta meta = parsed;
   std::string source, storeJson;
   if (!svc_.readSource || !svc_.readSource(name, source)) {
     lastRefusal_ = "cannot read '" + name + "'";
@@ -276,14 +291,19 @@ bool ScriptHost::launch(const std::string& name) {
   activate();
   vm_.gcCollect();
   std::string seeded;
-  instantiate(name, meta->second.parsed, source, seededStore(meta->second.parsed, source, storeJson, seeded));
+  instantiate(name, meta, source, seededStore(meta, source, storeJson, seeded));
   return true;
 }
 
 void ScriptHost::unload(const std::string& name) {
   if (!isOnDemand(name)) return;
   auto it = apps_.find(name);
-  if (it == apps_.end()) return;
+  if (it != apps_.end()) stop(it);
+}
+
+// Drops an app's instance and everything it holds; the script stays installed.
+void ScriptHost::stop(std::map<std::string, std::unique_ptr<ScriptApp>>::iterator it) {
+  const std::string name = it->first;
   activate();
   // on_hide runs before the unload.
   it->second->notifyVisible(false, lastCtx());
@@ -387,13 +407,14 @@ void ScriptHost::instantiate(const std::string& name, const ScriptMeta& meta,
   auto& installed = meta_[name];
   installed.parsed = meta;
   installed.dormantError.reset();
+  installed.parked = false;
 }
 
 // Out of the rotation and into the menu: the old instance goes, and the compile result is kept
 // so a broken script still reports its error before anyone starts it.
 void ScriptHost::installDormant(const std::string& name, const ScriptMeta& meta,
                                 const std::string& source, bool wasApp,
-                                std::unique_ptr<ScriptError> error) {
+                                std::unique_ptr<ScriptError> error, bool parked) {
   if (wasApp) {
     registry_.remove(name);
     apps_.erase(name);
@@ -404,7 +425,7 @@ void ScriptHost::installDormant(const std::string& name, const ScriptMeta& meta,
   }
   vm_.gcCollect();
   if (error->empty()) error.reset();
-  meta_[name] = {meta, std::move(error)};
+  meta_[name] = {meta, std::move(error), parked};
 }
 
 bool ScriptHost::refuseModule(const std::string& name, const ScriptMeta& meta) {
@@ -510,7 +531,7 @@ void ScriptHost::remove(const std::string& name) {
   }
 
   auto it = apps_.find(name);
-  if (it == apps_.end() && isOnDemand(name)) {
+  if (it == apps_.end() && (isOnDemand(name) || isParked(name))) {
     purge(name);
     meta_.erase(name);
     imports_.erase(name);
@@ -545,8 +566,14 @@ void ScriptHost::forgetScript(const std::string& name) {
   for (auto& button : buttons_)
     if (button.owner == name) button.owner.clear();
 
-  for (auto it = httpOwner_.begin(); it != httpOwner_.end();)
-    it = (it->second.script == name) ? httpOwner_.erase(it) : std::next(it);
+  for (auto it = httpOwner_.begin(); it != httpOwner_.end();) {
+    if (it->second.script != name) {
+      ++it;
+      continue;
+    }
+    if (svc_.http) svc_.http->cancel(it->first);
+    it = httpOwner_.erase(it);
+  }
 
   for (auto it = mqttSubs_.begin(); it != mqttSubs_.end();) {
     auto& subs = it->second;
@@ -710,6 +737,8 @@ void ScriptHost::tick(const RenderCtx& ctx, const std::string& currentAppId,
   lastCtx_ = ctx;
   haveCtx_ = true;
   drainStoreFlush();
+  if (switchesPending_ || (restartAtMs_ >= 0 && svc_.monotonicMs && svc_.monotonicMs() >= restartAtMs_))
+    applySwitches();
 
   drainHttp(&ctx);
   sweepHttp(&ctx);
@@ -746,8 +775,48 @@ void ScriptHost::staggerFirstLoops(int64_t stepMs) {
 void ScriptHost::setRunningScripts(std::vector<std::string> running) {
   running_ = std::move(running);
   runningKnown_ = true;
+  switchesPending_ = true;
   for (auto& button : buttons_)
     if (!active(button.owner)) button.owner.clear();
+}
+
+// Switching happens on the next tick, never inside the call that switched: that call may come from
+// the very script that is switched off.
+void ScriptHost::applySwitches() {
+  switchesPending_ = false;
+  restartAtMs_ = -1;
+  std::vector<std::string> names;
+  for (const auto& kv : meta_)
+    if (!kv.second.parsed.module && !kv.second.parsed.onDemand) names.push_back(kv.first);
+  for (const std::string& name : names) {
+    const auto installed = meta_.find(name);
+    if (installed == meta_.end()) continue;
+    const auto app = apps_.find(name);
+    if (switchedOff(name)) {
+      if (app == apps_.end()) continue;
+      std::unique_ptr<ScriptError> error;
+      if (!app->second->ok()) error.reset(new (std::nothrow) ScriptError(app->second->error()));
+      stop(app);
+      installed->second.dormantError = std::move(error);
+      installed->second.parked = true;
+    } else if (installed->second.parked && app == apps_.end()) {
+      clearRefusal();
+      if (start(name, installed->second.parsed)) {
+        // Into the rotation now that there is something to draw.
+        if (onInstalled_) onInstalled_(name);
+        continue;
+      }
+      // Stays out of the rotation, shows why, and is tried again.
+      const std::string why = "cannot start: " + lastRefusal_;
+      ScriptError* shown = installed->second.dormantError.get();
+      if (!shown || shown->message != why) {
+        if (svc_.log) svc_.log("[script] " + name + ": " + why);
+        installed->second.dormantError.reset(new (std::nothrow) ScriptError);
+        if (installed->second.dormantError) installed->second.dormantError->message = why;
+      }
+      if (svc_.monotonicMs) restartAtMs_ = svc_.monotonicMs() + kRestartRetryMs;
+    }
+  }
 }
 
 // An installed script that is not in the rotation still exists but must not be driven.
@@ -898,7 +967,7 @@ std::map<std::string, ScriptHost::Info> ScriptHost::list() const {
     out[kv.first] = std::move(info);
   }
   for (const auto& kv : meta_) {
-    if (!kv.second.parsed.onDemand || apps_.count(kv.first)) continue;
+    if ((!kv.second.parsed.onDemand && !kv.second.parked) || apps_.count(kv.first)) continue;
     Info info;
     if (kv.second.dormantError) info.error = *kv.second.dormantError;
     describe(kv.first, info);

@@ -1,7 +1,7 @@
 {
   "components": [
     {
-      "files_sha256": "f9a93a108a03ace1f6f43cd4568b216288ab47b5329c394882c920e00f479777",
+      "files_sha256": "8afb909c9249b37b96a42b3701a7a8e944efc245956dab83584b1cf321dd204a",
       "id": "berry",
       "license": {
         "file": "LICENSES/MIT-Berry.txt",
@@ -82,6 +82,22 @@
             "lib/berry/src/be_string.c"
           ],
           "summary": "2026-10-03: backport of upstream 6e6e6213 (berry-lang/berry#546) and 2c0b935c: parser depth limit (BE_MAX_PARSER_DEPTH in berry_conf.h), out-of-range jumps refused, string escapes bounded, string size capped, bytes() offsets checked without integer overflow and setbytes() clamped to the source, bytecode loader and debug.caller() hardened."
+        },
+        {
+          "files": [
+            "lib/berry/src/be_baselib.c",
+            "lib/berry/src/be_debug.c",
+            "lib/berry/src/be_lexer.c",
+            "lib/berry/src/be_lexer.h",
+            "lib/berry/src/berry.h"
+          ],
+          "summary": "2026-10-25: be_raiseline() reads the line where the last raise left the innermost function of a named chunk from the saved trace stack, so script runtime errors carry a line, and a compile() error saves its own trace so the line is not an older raise's; the lexer keeps the line a string literal ended on, so code after a string at the end of a line is no longer tagged with the next line (still wrong upstream)."
+        },
+        {
+          "files": [
+            "lib/berry/src/be_byteslib.c"
+          ],
+          "summary": "2026-11-01: bytes.get() of four bytes, little- or big-endian, shifts the top byte as uint32_t; shifted as int, a top byte from 0x80 up overflowed into the sign bit, which is undefined behaviour (UBSan stopped linux-crypto-script on it)."
         }
       ],
       "paths": [
@@ -100,7 +116,7 @@
       "version": "1.1.0"
     },
     {
-      "files_sha256": "73a5a0e201a7d089c4aa23d44e9566d03948872d4abe925534cf4f028fa778c9",
+      "files_sha256": "f8be54500875535a4ab457ca5686f23439a0058d9f1733c19c92540271f4c140",
       "id": "pubsubclient",
       "license": {
         "file": "LICENSES/MIT-PubSubClient.txt",
@@ -124,7 +140,7 @@
             "lib/PubSubClient/README.awtrix.md",
             "lib/PubSubClient/library.json"
           ],
-          "summary": "awtrix.1: inbound length validation before topic and packet-id access; documented in lib/PubSubClient/README.awtrix.md, which records the original file hashes"
+          "summary": "awtrix.1: inbound length validation before topic and packet-id access; awtrix.2: oversized PUBLISH drained and dropped, QoS1 still acknowledged; documented in lib/PubSubClient/README.awtrix.md, which records the original file hashes"
         }
       ],
       "paths": [
@@ -232,7 +248,7 @@
       "version": "R0.03"
     },
     {
-      "files_sha256": "5a4538c4bf0add984d136134a55fc6ecc40ed06f85136a04a6aff02206b19631",
+      "files_sha256": "37cc96913aef2f67f647872c71300f4f2a351263ba2d9159d038bf4806b8a270",
       "id": "cpp-httplib",
       "license": {
         "file": "LICENSES/MIT-cpp-httplib.txt",
@@ -272,6 +288,24 @@
             "src/platform/linux/host/vendor/httplib.h"
           ],
           "summary": "2026-10-04: the client accepts response status and header lines that end in a bare LF (streamABC/regiocast and other radio servers) and Shoutcast's ICY 200 OK as HTTP/1.0; request and trailer parsing are unchanged"
+        },
+        {
+          "files": [
+            "src/platform/linux/host/vendor/httplib.h"
+          ],
+          "summary": "2026-11-01: a client's max timeout that has run out waits no more instead of reaching poll as a negative timeout (poll would never return), and it also limits the wait to write"
+        },
+        {
+          "files": [
+            "src/platform/linux/host/vendor/httplib.h"
+          ],
+          "summary": "2026-11-01: the client parses response status lines and redirect locations by hand instead of with std::regex, whose recursion per character overran a thread's stack (musl's default thread stack: a Location of 512 characters), and a redirect to a port above 65535 fails instead of throwing std::out_of_range from std::stoi; everything else about these lines is unchanged"
+        },
+        {
+          "files": [
+            "src/platform/linux/host/vendor/httplib.h"
+          ],
+          "summary": "2026-11-01: a server route \".*\" matches with a plain check instead of std::regex, whose recursion per character overran a thread's stack (musl's default thread stack: a request path of 1024 bytes crashed the process); it still refuses a path holding CR or LF, as \".*\" does, and leaves Request::matches empty, which nothing here reads"
         }
       ],
       "paths": [
@@ -430,7 +464,7 @@
       "version": null
     },
     {
-      "files_sha256": "3c58937348663cb7af3e766ca13dd616d7c260bc1edc2a91fd42b769c5fa2081",
+      "files_sha256": "87160b22d5171060857f93bc1b2b054e51e7d52ed524047dbfc7e2827b3fc2ca",
       "id": "cmudict-scowl",
       "license": {
         "file": "LICENSES/CMUdict-SCOWL.txt",
@@ -441,20 +475,20 @@
       "name": "CMUdict pronunciations selected with SCOWL",
       "notice": "CMUdict",
       "origin": {
-        "note": "a selection of CMUdict entries (tools/speech/esdb35-us-application.tsv, chosen with the ESDB/SCOWL spelling list rel-2026.02.25) compiled into SpeechLexiconData.h by tools/speech/generate_lexicon.py; inputs pinned in tools/speech/sources.json",
+        "note": "a selection of CMUdict entries, chosen with the ESDB/SCOWL spelling list rel-2026.02.25, compiled into the English voice pack's lexicon (assets/speech/voice.atts, tensor fe.lexicon)",
         "reference": "74790861f652b15e4ac49015a90074ad62a27690",
         "url": "https://github.com/cmusphinx/cmudict"
       },
       "patches": [
         {
           "files": [
-            "src/platform/tc002/speech/SpeechLexiconData.h"
+            "assets/speech/voice.atts"
           ],
           "summary": "the selected entries encoded as a lookup table; pronunciations unchanged"
         }
       ],
       "paths": [
-        "src/platform/tc002/speech/SpeechLexiconData.h"
+        "assets/speech/voice.atts"
       ],
       "review": {
         "date": "2026-10-02",
@@ -466,6 +500,104 @@
       ],
       "vendored": true,
       "version": null
+    },
+    {
+      "files_sha256": "5596e5673a8e9ce34c7bfd0848dd7cf27105341ced6b81b85d580d0f39d60ee9",
+      "id": "tflite-micro-port",
+      "license": {
+        "file": "LICENSES/Apache-2.0.txt",
+        "name": "Apache-2.0",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "spdx": "Apache-2.0"
+      },
+      "name": "TensorFlow Lite Micro microfrontend and TensorFlow Lite reference kernels",
+      "notice": "TensorFlow Lite Micro",
+      "origin": {
+        "note": "the microfrontend (tensorflow/lite/experimental/microfrontend/lib) in the configuration pymicro_features 2.0.2 sets, and the int8 reference kernels (tensorflow/lite/kernels) as LiteRT 2.3 runs them with OpResolverType.BUILTIN_REF, ported to C++ for the TC002 wake word",
+        "reference": "LiteRT 2.3",
+        "url": "https://github.com/tensorflow/tflite-micro"
+      },
+      "patches": [],
+      "paths": [
+        "src/platform/tc002/wake/WakeFrontend.cpp",
+        "src/platform/tc002/wake/WakeFrontendTables.h",
+        "src/platform/tc002/wake/WakeKernels.cpp",
+        "src/platform/tc002/wake/WakeLoader.cpp",
+        "src/platform/tc002/wake/WakeOperators.cpp"
+      ],
+      "review": {
+        "date": "2026-11-02",
+        "decision": "accepted",
+        "rationale": "Apache-2.0 requires the license text and the copyright notice: text in LICENSES/Apache-2.0.txt, row in THIRD-PARTY-NOTICES.md, both in the TC002 bundle's licenses.txt.gz; the files name their origin in their first lines"
+      },
+      "targets": [
+        "linux"
+      ],
+      "vendored": true,
+      "version": "LiteRT 2.3"
+    },
+    {
+      "files_sha256": "70abcfdc243881ca584b6b55a1ec1179fd45fe85023e77683e0460ce8b92a461",
+      "id": "kissfft-port",
+      "license": {
+        "file": "LICENSES/BSD-3-Clause-KISS-FFT.txt",
+        "name": "BSD-3-Clause",
+        "sha256": "ddd1400f963747b305bfa39e21206e58805a1c650451e2ee5ce81ed86bc0b1ab",
+        "spdx": "BSD-3-Clause"
+      },
+      "name": "KISS FFT",
+      "notice": "KISS FFT",
+      "origin": {
+        "note": "kiss_fftr, kf_work and kf_bfly4 with FIXED_POINT 16, as TensorFlow Lite Micro's microfrontend builds them, ported to C++ for the TC002 wake word",
+        "reference": "v130",
+        "url": "https://github.com/mborgerding/kissfft"
+      },
+      "patches": [],
+      "paths": [
+        "src/platform/tc002/wake/WakeFft.cpp",
+        "src/platform/tc002/wake/WakeFft.h"
+      ],
+      "review": {
+        "date": "2026-11-02",
+        "decision": "accepted",
+        "rationale": "BSD-3-Clause requires the copyright notice, the conditions and the disclaimer with source and binary copies: text in LICENSES/BSD-3-Clause-KISS-FFT.txt, row in THIRD-PARTY-NOTICES.md, both in the TC002 bundle's licenses.txt.gz; the file names its origin in its first lines"
+      },
+      "targets": [
+        "linux"
+      ],
+      "vendored": true,
+      "version": "1.3.0"
+    },
+    {
+      "files_sha256": "395aa1f72bd90d4d196835b0379e1ce34e3d14c76da00d58915270ca909bfb2b",
+      "id": "microwakeword-vad",
+      "license": {
+        "file": "LICENSES/Apache-2.0.txt",
+        "name": "Apache-2.0",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "spdx": "Apache-2.0"
+      },
+      "name": "microWakeWord voice activity model",
+      "notice": "microWakeWord voice activity model",
+      "origin": {
+        "note": "models/v2/vad.tflite and vad.json, unchanged, with the repository's NOTICE; the model files date from the v2 commit, main was at 40ff33f57f8fc6ad71a75ef085abbf742495b225 when they were taken on 2026-10-31",
+        "reference": "9a72109cc935f77e34cf8ffe7b868155c37ec201",
+        "url": "https://github.com/esphome/micro-wake-word-models"
+      },
+      "patches": [],
+      "paths": [
+        "assets/tc002/vad"
+      ],
+      "review": {
+        "date": "2026-10-31",
+        "decision": "accepted",
+        "rationale": "Apache-2.0 requires the license text and the NOTICE with every copy: text in LICENSES/Apache-2.0.txt, NOTICE beside the model, row in THIRD-PARTY-NOTICES.md; the TC002 release carries the model as share/vad/ with its NOTICE, and the license text in licenses.txt.gz"
+      },
+      "targets": [
+        "linux"
+      ],
+      "vendored": true,
+      "version": "v2"
     }
   ],
   "notice_exclusions": [

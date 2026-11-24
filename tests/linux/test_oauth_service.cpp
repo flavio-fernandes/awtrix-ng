@@ -8,12 +8,14 @@
 #include <filesystem>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "platform/linux/oauth/OAuthFlow.h"
 #include "platform/linux/oauth/OAuthService.h"
+#include "platform/posix/Digest.h"
 #include "OAuthTestSupport.h"
 
 using namespace awtrix;
@@ -86,16 +88,20 @@ int main() {
   Fake fake;
   std::mutex sourceMutex;
   std::map<std::string, std::string> sources = {{"Spot", kSource}};
+  bool sourcesReadable = true;
   std::atomic<long long> now{1000};
   oauth::Service service(
       vault, [&](const oauth::HttpCall& c) { return fake.reply(c); },
-      [&](const std::string& app) {
+      [&](const std::string& app) -> std::optional<std::string> {
         std::lock_guard<std::mutex> lock(sourceMutex);
+        if (!sourcesReadable) return std::nullopt;
         const auto it = sources.find(app);
         return it == sources.end() ? std::string() : it->second;
       },
       [&] { return now.load(); });
+  const std::size_t threads = awtrix::test::threadCount();
   service.begin();
+  check(awtrix::test::threadCount() == threads, "begin runs no thread");
 
   std::string error, url;
   check(service.status("Spot").declared && service.status("Spot").state == "signedOut", "starts signed out");
@@ -108,7 +114,9 @@ int main() {
   check(oauth_test::stateMember(state, "r") == "http://192.168.1.50" && oauth_test::stateMember(state, "a") == "Spot",
         "state names the way back");
   check(!service.submitCode("Spot", "c0de", "wrong", error) && error == "sign-in expired or unknown", "state checked");
+  check(awtrix::test::threadCount() == threads, "nor does anything before the first job");
   check(service.submitCode("Spot", "c0de", state, error), "code accepted");
+  check(awtrix::test::threadCount() == threads + 1, "which starts it");
   check(waitState(service, "signedIn"), "signed in after the exchange");
   check(fake.count() == 1 && fake.calls[0].body.find("code_verifier=") != std::string::npos, "verifier sent");
   check(!service.submitCode("Spot", "c0de", state, error), "a state is used once");
@@ -217,7 +225,7 @@ int main() {
   }
   const auto spec = oauth::parseSpec(kSource);
   oauth::Record longLived;
-  longLived.binding = oauth::sha256Hex("Spot\n" + spec->line);
+  longLived.binding = posix::sha256Hex("Spot\n" + spec->line);
   longLived.clientId = "cid";
   longLived.accessToken = "LONG";
   vault.save("Spot", longLived);
@@ -240,6 +248,20 @@ int main() {
     std::lock_guard<std::mutex> lock(sourceMutex);
     sources["Stale"] = kSource;
   }
+  {
+    std::lock_guard<std::mutex> lock(sourceMutex);
+    sourcesReadable = false;
+  }
+  service.dropStale();
+  check(vault.load("Spot", rec) && vault.load("Stale", rec) && vault.load("Gone", rec),
+        "at start a source that cannot be read keeps its record");
+  service.sourceSaved("Spot");
+  check(vault.load("Spot", rec), "so does a save whose source cannot be read");
+  {
+    std::lock_guard<std::mutex> lock(sourceMutex);
+    sourcesReadable = true;
+  }
+  service.sourceSaved("Spot");
   service.dropStale();
   check(vault.load("Spot", rec) && !vault.load("Stale", rec) && !vault.load("Gone", rec),
         "at start only records that still match their script stay");

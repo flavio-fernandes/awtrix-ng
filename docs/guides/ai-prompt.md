@@ -93,7 +93,7 @@ or `awtrixng-xxxxxx.local`.
 > Show the ICE departures from Hamburg Hbf on my AWTRIX at 192.168.1.42.
 
 Without the address, it gives you the script and the same install steps as above. For
-anything secret, such as an API key, it leaves a marked line for you to fill in. It does not
+anything secret, such as an API key, it <!-- only esp32 esp32-s3 -->leaves a marked line for you to fill in<!-- /only --><!-- only tc002 -->adds a field to the [app's settings](../getting-started/web-ui.md#api-keys) for you to fill in<!-- /only -->. It does not
 ask you for the key.
 
 ---
@@ -103,7 +103,7 @@ ask you for the key.
 Usually the fix is one more message in the same chat.
 
 **The display shows `ERR:` in red.** The script has an error. Open the **Scripts** tab in the
-web UI. The message is shown next to your script, and the editor marks the line when it can.
+web UI. The message and its line are shown next to your script, and the editor marks the line.
 **Copy the message into the chat.** The assistant usually fixes the error in one answer.
 
 **The app runs but looks wrong.** Say what you see: *"the text is cut off on the right"*,

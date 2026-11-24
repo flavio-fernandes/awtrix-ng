@@ -1,7 +1,10 @@
 #include "platform/linux/LinuxOptions.h"
 
 #include <cstdio>
+#include <string>
+#include <utility>
 
+#include "core/Sha256Hex.h"
 #include "platform/posix/Text.h"
 #include "platform/tc002/contract/RuntimeContract.h"
 
@@ -22,15 +25,21 @@ void usage() {
               "  [%s %d] (TC002 only: socket to the awtrix-tc002-audio-pcm speaker helper)\n"
               "  [--speech-voice FILE] (with the speaker: the ATTS voice that reads speech aloud; a file\n"
               "   that cannot be read leaves the clock without speech)\n"
+              "  [--wake-word FILE] (with the speaker: the wake word model that can start the assistant; its\n"
+              "   settings are the .json file of the same name beside it)\n"
+              "  [--vad FILE] (with the speaker: the voice activity model that ends script recordings;\n"
+              "   its settings are the .json file of the same name beside it)\n"
               "  [%s poweron|software|panic|watchdog] (supervised only: why this start happens)\n"
               "  [%s 12-HEX-DIGITS] (supervised only: the device id; else a random one, kept in DATA/identity\n"
-              "   when unsupervised)\n",
+              "   when unsupervised)\n"
+              "  [%s 64-HEX-DIGITS] (supervised only: reported once to the AWTRIX Hub as the clock's\n"
+              "   activation)\n",
               tc002::kInputFdsFlag, tc002::inputFdsValue().c_str(), tc002::kSupervisorFdFlag, tc002::kSupervisorFd,
-              tc002::kAudioFdFlag, tc002::kAudioFd, tc002::kStartReasonFlag, tc002::kUidFlag);
+              tc002::kAudioFdFlag, tc002::kAudioFd, tc002::kStartReasonFlag, tc002::kUidFlag, tc002::kActivationFlag);
   std::puts("  [--performance-report NEW_FILE] (private aggregate JSON written at exit)\n"
             "  [--boot-intro [--boot-sound FILE]] (power-on intro before the first app; the MP3 FILE\n"
             "   plays with it on the TC002 speaker)\n"
-            "  [--ca-file FILE] (PEM roots every HTTPS client verifies against, read once)\n"
+            "  [--ca-file FILE] (PEM roots every HTTPS client verifies against, read by the first one)\n"
             "  [--update-state FILE --update-dir DIRECTORY\n"
             "   [--release-root DIRECTORY]] (supervised only: POST /update\n"
             "   takes awtrix-ng-tc002.awup packages, stages them in the update directory and\n"
@@ -82,11 +91,14 @@ bool readValue(const std::string& arg, const char* value, LinuxOptions& o) {
   else if (arg == "--mqtt-ca-file") o.administration.mqttCaFile = value;
   else if (arg == "--ca-file") return setOnce(o.caFile, value);
   else if (arg == "--speech-voice") return setOnce(o.speechVoice, value);
+  else if (arg == "--wake-word") return setOnce(o.wakeWord, value);
+  else if (arg == "--vad") return setOnce(o.vad, value);
   else if (arg == "--update-state") return setOnce(o.updateOptions.statePath, value);
   else if (arg == "--release-root") return setOnce(o.updateOptions.releaseRoot, value);
   else if (arg == tc002::kUpdateDirFlag) return setOnce(o.updateOptions.workDirectory, value);
   else if (arg == tc002::kStartReasonFlag) return tc002::validStartReason(value) && setOnce(o.startReason, value);
   else if (arg == tc002::kUidFlag) return tc002::validUid(value) && setOnce(o.uid, value);
+  else if (arg == tc002::kActivationFlag) return isSha256Hex(value) && setOnce(o.activationId, value);
   else return false;
   return true;
 }
@@ -117,6 +129,9 @@ int parseLinuxOptions(int argc, char** argv, LinuxOptions& o) {
   if (!o.uid.empty() && !o.supervised) {
     std::fprintf(stderr, "%s requires --supervisor-fd\n", tc002::kUidFlag); return 2;
   }
+  if (!o.activationId.empty() && !o.supervised) {
+    std::fprintf(stderr, "%s requires --supervisor-fd\n", tc002::kActivationFlag); return 2;
+  }
   if (o.bluetooth && !o.supervised) {
     std::fprintf(stderr, "%s requires --supervisor-fd\n", tc002::kBluetoothFlag); return 2;
   }
@@ -128,8 +143,11 @@ int parseLinuxOptions(int argc, char** argv, LinuxOptions& o) {
   if (!o.bootSound.empty() && !o.bootIntro) {
     std::fputs("--boot-sound requires --boot-intro\n", stderr); return 2;
   }
-  if (!o.speechVoice.empty() && !o.speakerRequested) {
-    std::fprintf(stderr, "--speech-voice requires %s\n", tc002::kAudioFdFlag); return 2;
+  const std::pair<const char*, const std::string*> speakerFiles[] = {
+      {"--speech-voice", &o.speechVoice}, {"--wake-word", &o.wakeWord}, {"--vad", &o.vad}};
+  for (const auto& [flag, file] : speakerFiles) {
+    if (file->empty() || o.speakerRequested) continue;
+    std::fprintf(stderr, "%s requires %s\n", flag, tc002::kAudioFdFlag); return 2;
   }
   return -1;
 }

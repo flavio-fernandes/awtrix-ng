@@ -3,12 +3,17 @@
 #include <string_view>
 
 #include "platform/tc002/voice/WebSocket.h"
+#include "platform/tc002/wake/WakeSensitivity.h"
 
 namespace awtrix::tc002::voice {
+constexpr std::string_view kAssistantOff = "off", kHomeAssistant = "ha", kAssistantAppPrefix = "app:";
 struct Config {
-  bool enabled = false;
+  bool wakeWord = false;
   std::string url, token, pipeline, device;
+  std::string assistant{kAssistantOff};
+  wake::WakeSensitivity wakeSensitivity = wake::WakeSensitivity::Normal;
 };
+bool onlyWakeChanged(const Config& before, const Config& after);
 // An origin only: credentials, paths, queries and fragments are rejected.
 bool parseOrigin(std::string_view url, WebSocket::Endpoint& endpoint);
 // Resolve a TTS URL without allowing another origin or a protocol-relative URL.
@@ -26,10 +31,13 @@ class ConfigStore {
   bool erase();
   std::string publicJson() const;
   const Config& get() const { return config_; }
-  const std::string& directory() const { return directory_; }
+  const std::string& assistantApp() const { return assistantApp_; }
 
  private:
+  void replace(Config next);
+
   std::string directory_;
   Config config_;
+  std::string assistantApp_;
 };
 }  // namespace awtrix::tc002::voice
