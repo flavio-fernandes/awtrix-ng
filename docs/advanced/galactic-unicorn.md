@@ -138,7 +138,8 @@ there, not the memory Wi-Fi needs.
 
 On the Pico W a failed install of a large script can leave the memory in pieces, so later
 installs are refused with `507` although enough memory is free in total. Restart to recover.
-Script `http.*` requests, and Modbus reads, which use the same path, return `false`. Timers,
+Script `http.*` requests call back at once with `nil, 0`, as a failed request does, and Modbus
+reads, which use the same path, with `nil, -1`. Timers,
 drawing, script icons, storage, buttons, sound and MQTT work as on every other AWTRIX NG clock.
 
 If a script takes the clock down at every start, hold **A and C** together for three seconds
@@ -250,7 +251,8 @@ The button webhook was tested only on the host.
   every folder level it needs.
 - A request that announces a body and never sends it is closed without an answer, not with the
   `503` the image without scripting gives a complete request.
-- Script `http.*` requests and Modbus reads are not available and return `false` (fork issue #6).
+- Script `http.*` requests and Modbus reads are not available: their callback gets `nil, 0` (Modbus:
+  `nil, -1`) at once (fork issue #6).
 - How long the board waits for a client that stops reading, and the full start-up log in
   `/api/v1/logs`, were not established on the bench.
 

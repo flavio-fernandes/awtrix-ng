@@ -91,6 +91,7 @@ Layouts have their own budgets, listed in `capabilities.layouts.limits`. See
 <!-- only esp32 -->
 | Memory held back while a script compiles | 24 KiB (24576 bytes), on a board without usable PSRAM | the install fails with `out of memory` |
 <!-- /only -->
+<!-- only esp32 esp32-s3 tc002 -->
 | HTTP response body | 8 KB, or `cap` if the request sets one - lowered to the free memory when the answer starts | the body is cut at that size. To keep only the part you need, use [`find`](../guides/scripting/network.md#picking-one-field-out-of-a-big-answer) |
 | Free memory while a response arrives | enough for the rest of the body | the whole request fails: the callback gets `nil` and the **real** status code |
 | HTTP connect and read timeout | <!-- only esp32 esp32-s3 -->5 s each<!-- /only --><!-- only tc002 -->3 s to connect, 5 s to read<!-- /only --> | the callback gets `nil, 0` |
@@ -105,6 +106,7 @@ Layouts have their own budgets, listed in `capabilities.layouts.limits`. See
 | HTTP bodies waiting | 4 MB across all scripts | `http.post()` calls back `nil, 0` at once |
 <!-- /only -->
 | HTTP requests at a time | 1 for all scripts together<!-- only tc002 -->, and 1 more for those with `timeout`<!-- /only -->, with at most <!-- only esp32 esp32-s3 -->16 in the queue<!-- /only --><!-- only tc002 -->8 in each queue<!-- /only --> | a slow request delays the others, also those of other scripts, and the wait counts towards the 30 s. With the queue full, `http.get()` calls back `nil, 0` at once |
+<!-- /only -->
 | Script timers | 8 per app, 32 in total; each 25 ms to 1 day | `timer.after()` and `timer.every()` return `nil` |
 | MQTT subscriptions | 8 per script | further `mqtt.subscribe()` calls are ignored |
 | MQTT messages waiting | 32, shared by all scripts | the oldest waiting message is dropped |
@@ -282,7 +284,8 @@ already changed.
 
 The [Pico W and Pico 2 W images](../advanced/galactic-unicorn.md) reserve **512 KiB of LittleFS**, on 2 MB and on 4 MB of
 flash alike. Scripts may use 48 KB of memory on the Pico W and 96 KB on the Pico 2 W; script
-`http.*` requests and Modbus reads return `false`. Melodies follow the ordinary melody limits;
+`http.*` requests and Modbus reads fail at once (the callback gets `nil, 0`, Modbus `nil, -1`), so
+no script HTTP limit applies. Melodies follow the ordinary melody limits;
 MP3, radio, outbound TLS and firmware updates from the browser are not part of these images.
 
 | Limit | Value | At the edge |

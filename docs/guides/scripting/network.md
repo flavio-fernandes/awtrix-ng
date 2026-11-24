@@ -4,8 +4,9 @@ Fetch data from the internet, pick out the values you need, and talk to your sma
 MQTT.
 
 <!-- only rp2040 -->
-On the Galactic Unicorn the board has no script web requests yet: `http.*` and Modbus reads
-return `false`. Timers, storage, buttons, sound and MQTT work as described in this guide.
+On the Galactic Unicorn the board has no script web requests yet: `http.*` calls back at once
+with `nil, 0`, and a Modbus read with `nil, -1`. Timers, storage, buttons, sound and MQTT work as
+described in this guide.
 
 <!-- /only -->
 
