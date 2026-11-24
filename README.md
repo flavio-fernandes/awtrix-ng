@@ -31,9 +31,10 @@ written for one clock works on the others.
 
 It also runs on Pimoroni's [Galactic Unicorn](docs/advanced/galactic-unicorn.md), a fixed 53×11
 display, with a Pico W (RP2040) or a Pico 2 W (RP2350). Its images install over USB as UF2 files,
-and its optional features follow the board's capabilities. Both images were checked on the board
-with 1.2.2; a Pico W running the 1.2.1-based port (PR 1) was upgraded over USB and kept its
-settings, Wi-Fi and scripts. See the guide, and the blog post
+and its optional features follow the board's capabilities. The Pico 2 W Unicorn was upgraded in
+place from 1.2.2 to 1.2.3 and kept its settings, scripts and apps. The 1.2.3 Pico W image was
+checked for boot on a bare Pico W without a display. See the guide's
+[verification scope](docs/advanced/galactic-unicorn.md#verification-scope) and the blog post
 [AWTRIX on a Pico](https://www.flaviof.com/blog2/post/hacks/awtrix-picow/) for the story of the
 port and more details about the Unicorn.
 

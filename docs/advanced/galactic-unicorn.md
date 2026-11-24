@@ -10,12 +10,11 @@ the Pico fitted to your board:
 
 | Hardware | PlatformIO environment | USB image | Hardware status |
 | --- | --- | --- | --- |
-| Pico W, RP2040, 264 KB SRAM, 2 MB flash | `galactic_unicorn` | `firmware-galactic-unicorn.uf2` | verified on the board on 1.2.2 |
-| Pico 2 W, RP2350, 520 KB SRAM, 4 MB flash | `galactic_unicorn_2w` | `firmware-galactic-unicorn-2w.uf2` | verified on the board on 1.2.2 |
+| Pico W, RP2040, 264 KB SRAM, 2 MB flash | `galactic_unicorn` | `firmware-galactic-unicorn.uf2` | 1.2.3 boot checked on a bare Pico W |
+| Pico 2 W, RP2350, 520 KB SRAM, 4 MB flash | `galactic_unicorn_2w` | `firmware-galactic-unicorn-2w.uf2` | 1.2.3 upgrade checked on a Galactic Unicorn |
 
-Both images of this build were checked on a Galactic Unicorn: the Pico 2 W in full, the Pico W
-by an upgrade from PR 1 (1.2.1 base). See [Verification scope](#verification-scope) for what
-was checked and for the known limits.
+See [Verification scope](#verification-scope) for the 1.2.3 bench results, earlier checks and
+known limits.
 
 Both images reserve **512 KiB for LittleFS**, separate from the firmware. Neither Pico has
 PSRAM. There is no battery, and no I²C sensor is read (the Qw/ST connector is unused), so
@@ -127,9 +126,9 @@ budget depends on the chip:
 | Largest script that installed (PR 1, 1.2.1 base) | about 7 KB of source | about 28 KB of source |
 
 The last two rows were measured on PR 1 (1.2.1 base); 1.2.2's script engine is larger, so read
-`freeHeapBytes` and `scriptHeapBudgetBytes` on your own board. On a Pico W with this build, the
+`freeHeapBytes` and `scriptHeapBudgetBytes` on your own board. In 1.2.2 tests on a Pico W, the
 board logs `heap: 127 KB free with radio up` at boot, and a Tetris game script brings the free
-heap from 83312 to 73888 bytes. On a Pico 2 W with this build,
+heap from 83312 to 73888 bytes. In 1.2.2 tests on a Pico 2 W,
 `freeHeapBytes` / `largestFreeBlockBytes` read 351428 / 342280 bytes before the scripting guide's
 Hello script was installed, 351140 / 336960 with it running, and 347316 / 331184 with a script
 that animates three script icons, still at 42 fps. On the Pico 2 W a larger script
@@ -189,7 +188,26 @@ their own size. See [Limits](../reference/limits.md#tall-displays-content-band-a
 
 ## Verification scope
 
-Verified on the board with this build (AWTRIX NG 1.2.2), **Pico 2 W**:
+### AWTRIX NG 1.2.3
+
+The **Pico 2 W Galactic Unicorn** kept its settings, scripts and apps through an in-place USB
+upgrade from 1.2.2 to 1.2.3. Bench checks on 1.2.3 covered:
+
+- HTTP smoke test (`tools/pico/smoke.sh`): 109 passed, 0 failed. The burst test
+  (`tools/pico/burst.sh`) got responses to all 80 requests.
+- Display: the clock in the eight-row content band, a background filling all eleven rows,
+  an HTTP notification, a running script and a scrolling `ERR:<name>` frame. The API reported
+  the source line for the script error.
+- BrickBreaker at 42 fps.
+- A settings backup round-trip and a reboot. The saved settings, scripts and apps were still
+  present afterward.
+
+The 1.2.3 **Pico W** image booted to setup mode on a bare Pico W with no display attached.
+MQTT and Home Assistant were not verified on 1.2.3.
+
+### AWTRIX NG 1.2.2 and earlier
+
+Verified on the **Pico 2 W Galactic Unicorn** with 1.2.2:
 
 - the HTTP smoke test (`tools/pico/smoke.sh`): 109 passed, 0 failed; 80 of 80 requests at once
   answered;
@@ -221,13 +239,13 @@ Verified on the board with this build (AWTRIX NG 1.2.2), **Pico 2 W**:
 - MQTT on a Home Assistant broker: discovery publishes one device with 25 entities, and a
   notification sent over MQTT is shown.
 
-The **Pico W** image of this build was checked on a board in daily use, upgraded over USB from
+The **Pico W** 1.2.2 image was checked on a board in daily use, upgraded over USB from
 PR 1 (1.2.1 base):
 
 - against a backup taken before the upgrade, all 67 system settings and 36 of 37 display
   settings were unchanged (the owner changed the other one afterwards), and Wi-Fi and the
   stored script were kept;
-- Wi-Fi joined, MQTT connected and Home Assistant discovery published (firmware 1.2.2 shown);
+- Wi-Fi joined, MQTT connected and Home Assistant discovery published, showing firmware 1.2.2;
 - the display refreshing, the light sensor read, and the web UI dashboard.
 
 The rest of the Pico W list comes from PR 1 (1.2.1 base), which verified on the board: display,
