@@ -359,6 +359,34 @@ async function run() {
     'saving a module setting patches the module by name');
 
   window.close();
+
+  // ---- the same settings on a Galactic Unicorn (RP2040) ------------------
+  // A hint is script metadata, not a board feature: a Pico with scripting shows it the same way.
+  {
+    const pico = await boot({
+      caps: { scripting: true, browserOta: false, transitions: [],
+              audio: { rtttl: true, track: false, mp3: false, radio: false } },
+      device: { soc: 'rp2040', updateImage: 'firmware-galactic-unicorn.uf2' } });
+    const pdoc = pico.window.document;
+    pico.store.apps = INVENTORY;
+    pico.store.configs = CONFIG;
+    await goto(pico.window, '#/apps');
+    const prow = [...pdoc.querySelectorAll('.approw')]
+      .find(r => r.querySelector('.nmt') && r.querySelector('.nmt').textContent === 'Weather');
+    // The panel outlives the row: opening it draws the list again.
+    const ppanel = prow.querySelector('.appcfg');
+    prow.querySelector('.racts > .cfgbtn').click();
+    await flush(60);
+    const pctl = key => {
+      const row = [...ppanel.querySelectorAll('.frow')]
+        .find(r => r.querySelector('.key') && r.querySelector('.key').textContent === key);
+      return row && row.querySelector('.ctl');
+    };
+    const phost = pctl('host').querySelector('input[type=text]');
+    assert(!ppanel.hidden && phost.value === '' && phost.placeholder === '192.168.1.10:8080',
+      'on a Pico with scripting, a hint is gray text in an empty box too');
+    pico.window.close();
+  }
   console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);
 }
