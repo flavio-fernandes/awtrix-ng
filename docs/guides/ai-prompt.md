@@ -140,6 +140,13 @@ password or key you care about into a script.
 
 **It knows only the calls in the prompt.** The prompt lists the scripting API. The assistant
 does not use anything that is not in it.
+<!-- only rp2040 -->
+The prompt and the skill are the same for every AWTRIX NG clock. They teach web requests
+(`http.*`) and Modbus reads. On the Galactic Unicorn neither works yet. The callback gets
+`nil, 0` at once, and a Modbus read gets `nil, -1`. See [Network](scripting/network.md).
+Ask the assistant for an app that needs no web request, or for one that gets its data over
+[MQTT](scripting/network.md#mqtt) with `mqtt.subscribe()`.
+<!-- /only -->
 
 ---
 
