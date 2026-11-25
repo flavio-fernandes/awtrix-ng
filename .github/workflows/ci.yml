@@ -8,8 +8,8 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# A v* tag runs only the release job: it publishes what the successful run on main built and
-# tested for the same commit, so push main, wait for it, then tag.
+# A v* tag runs only the release job: it publishes what the successful run on the default
+# branch built and tested for the same commit, so push to that branch, wait for it, then tag.
 jobs:
   native-tests:
     name: Core host unit tests (native)
@@ -123,10 +123,10 @@ jobs:
     if: github.ref_type != 'tag'
     uses: ./.github/workflows/tc002-image-tools.yml
 
-  # The TC002 packages are built on every push to main; the release job of a tag takes them
-  # from that run.
+  # The TC002 packages are built on every push to the default branch (main upstream); the
+  # release job of a tag takes them from that run.
   tc002-update:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     uses: ./.github/workflows/tc002-update.yml
 
   device-build:
@@ -297,7 +297,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      # To read the main run's artifacts, and to dispatch the Docs workflow once
+      # To read the default branch run's artifacts, and to dispatch the Docs workflow once
       # the assets exist -- see the last step.
       actions: write
     steps:
@@ -311,17 +311,18 @@ jobs:
           [ -f "docs/releases/$version.md" ] || { echo "::error::docs/releases/$version.md is missing"; exit 1; }
           grep -q "releases/$version.md" mkdocs.yml || { echo "::error::docs/releases/$version.md is not in the mkdocs.yml nav"; exit 1; }
           if grep -n -e '-XX' "docs/releases/$version.md" docs/releases/index.md; then echo "::error::the release notes still have no release date"; exit 1; fi
-      - name: Fetch what the main run built for this commit
-        # The tag publishes the exact files a green run on main built and tested
-        # for the same commit: firmware, USB images and the TC002 packages. The
+      - name: Fetch what the default branch run built for this commit
+        # The tag publishes the exact files a green run on the default branch built
+        # and tested for the same commit: firmware, USB images and the TC002 packages. The
         # firmware version comes from the version file, not the ref, so nothing
         # differs from a rebuild here.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main --event push \
+          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch "${{ github.event.repository.default_branch }}" --event push \
                 --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          [ -n "$run" ] || { echo "::error::no successful CI run on main for $GITHUB_SHA -- push main, wait for it, then tag"; exit 1; }
+          [ -n "$run" ] || { echo "::error::no successful CI run on $DEFAULT_BRANCH for $GITHUB_SHA -- push $DEFAULT_BRANCH, wait for it, then tag"; exit 1; }
           echo "Publishing the artifacts of run $run"
           gh run download "$run" --repo "$GITHUB_REPOSITORY" --dir from-main
       - name: Stage the firmware and the TC002 packages
@@ -389,12 +390,14 @@ jobs:
       - name: Announce the release on Discord
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run discord-release.yml --ref main -f tag="$GITHUB_REF_NAME"
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run discord-release.yml --ref "$DEFAULT_BRANCH" -f tag="$GITHUB_REF_NAME"
       - name: Rebuild the docs so the browser flasher serves this release
         # The flasher on getting-started/flashing.md writes whatever factory
         # images the documentation site carries, and those are copied out of the
         # newest release during the docs build. Without this the site keeps
-        # handing out the previous release until someone pushes to main.
+        # handing out the previous release until the next docs build.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run docs.yml --ref main
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: gh workflow run docs.yml --ref "$DEFAULT_BRANCH"

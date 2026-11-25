@@ -417,12 +417,12 @@ PlatformIO installed through `pip`, plus Node.js for the firmware builds and the
 | Pico firmware build | `pio run -e <env>` | `galactic_unicorn`, `galactic_unicorn_2w`; uploads `uf2-<env>` with the `firmware.uf2` |
 | API docs match the firmware | `tools/check_docs_sync.py`, `check_flow_converter.py`, `gen_agent_skill.py --check`, `check_berry_api.py`, `check_prelude_solidified.py`, `check_font_sync.py`, `check_partitions.py`, `test_partition_reservations.py` | Documented fields and error codes, the flow converter's maps, the downloadable agent skill, the editor's Berry table, the solidified prelude, the generated panel fonts, every partition table and UF2 filesystem reservation |
 
-A push to `main` also builds the TC002 update package and the TC002 USB installation package with
+A push to the default branch (`main` upstream) also builds the TC002 update package and the TC002 USB installation package with
 its corresponding sources. A `v*` tag runs only the release job: it takes every file from the
-successful run on `main` for the same commit and publishes every ESP32 update image, the USB
+successful run on the default branch for the same commit and publishes every ESP32 update image, the USB
 install images for each supported flash size, the Galactic Unicorn UF2s
 (`firmware-galactic-unicorn.uf2`, `firmware-galactic-unicorn-2w.uf2`), the TC002 packages and the
-license notices. So push `main`, wait until its run is green, then tag. The TC002 desktop
+license notices. So push to the default branch, wait until its run is green, then tag. The TC002 desktop
 installers are not part of a release: they live in `installer/tc002/`.
 The tag must match `version`, and `docs/releases/<version>.md` must exist: the release body only
 links that page in each clock's documentation.
@@ -431,8 +431,8 @@ Other workflows:
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `docs.yml` | pushes and pull requests to `main`, and after a release | Builds this site with `tools/docs/build_site.py`: one documentation per clock (fails on broken links and anchors, and on text that names another clock), including the browser flasher and the TC002 browser installer, and publishes it to GitHub Pages |
-| `tc002-update.yml` | pushes to `main` (called by `ci.yml`), and on dispatch | Builds `awtrix-ng-tc002.awup` from scratch: the musl toolchain (cached until the Buildroot version, configuration or patches change), the glibc toolchain, the kernel tree, `build_bundle.sh` and `tc002_install.py package`; then `tc002-sources.tar.gz` (`source_package.py`) and `usb-awtrix-ng-tc002.zip` (`browser_package.py`) |
+| `docs.yml` | pushes and pull requests to `main`, and on the default branch after a release | Builds this site with `tools/docs/build_site.py`: one documentation per clock (fails on broken links and anchors, and on text that names another clock), including the browser flasher and the TC002 browser installer, and publishes it to GitHub Pages |
+| `tc002-update.yml` | pushes to the default branch (called by `ci.yml`), and on dispatch | Builds `awtrix-ng-tc002.awup` from scratch: the musl toolchain (cached until the Buildroot version, configuration or patches change), the glibc toolchain, the kernel tree, `build_bundle.sh` and `tc002_install.py package`; then `tc002-sources.tar.gz` (`source_package.py`) and `usb-awtrix-ng-tc002.zip` (`browser_package.py`) |
 | `tc002-installer.yml` | pushes and pull requests that change `tools/tc002/desktop/`, `tools/tc002/browser-image/`, `docs/assets/tc002/`, and on dispatch | Builds and tests the TC002 desktop installer for Windows, macOS and Linux; a new build is copied into `installer/tc002/` by hand |
 | `system-build.yml` | pull requests that change `firmware/buildroot/`, `tools/system/` | Cross-builds the experimental ARM userspace |
 | `discord-release.yml` | a published release, or dispatch by the release job | Announces a release |

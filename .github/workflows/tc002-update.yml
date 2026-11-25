@@ -71,7 +71,7 @@ jobs:
           tar -xJf "$RUNNER_TEMP/buildroot.tar.xz" -C "$RUNNER_TEMP" "buildroot-$version/package/musl"
           echo "MUSL_RECIPE=$RUNNER_TEMP/buildroot-$version/package/musl" >> "$GITHUB_ENV"
       # The USB installation package names the source archive by its release URL and digest, so
-      # both are built here; on main the URL names the tag of the version file.
+      # both are built here; on branch runs the URL names the tag of the version file.
       - name: Build the corresponding sources and the USB installation package
         run: |
           tag=$GITHUB_REF_NAME
