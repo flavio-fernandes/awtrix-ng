@@ -34,7 +34,8 @@ display, with a Pico W (RP2040) or a Pico 2 W (RP2350). Its images install over 
 and its optional features follow the board's capabilities. The Pico 2 W Unicorn was upgraded in
 place from 1.2.2 to 1.2.3 and kept its settings, scripts and apps. MQTT and Home Assistant were
 checked on that Pico 2 W: it dropped an oversized MQTT notification without disconnecting.
-The 1.2.3 Pico W image was checked for boot on a bare Pico W without a display. See the guide's
+The 1.2.3 Pico W image was checked for boot on a bare Pico W without a display, and was installed
+on a Galactic Unicorn with a Pico W, where it ran normally. See the guide's
 [verification scope](docs/advanced/galactic-unicorn.md#verification-scope) and the blog post
 [AWTRIX on a Pico](https://www.flaviof.com/blog2/post/hacks/awtrix-picow/) for the story of the
 port and more details about the Unicorn.

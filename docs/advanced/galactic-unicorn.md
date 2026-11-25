@@ -10,7 +10,7 @@ the Pico fitted to your board:
 
 | Hardware | PlatformIO environment | USB image | Hardware status |
 | --- | --- | --- | --- |
-| Pico W, RP2040, 264 KB SRAM, 2 MB flash | `galactic_unicorn` | `firmware-galactic-unicorn.uf2` | 1.2.3 boot checked on a bare Pico W |
+| Pico W, RP2040, 264 KB SRAM, 2 MB flash | `galactic_unicorn` | `firmware-galactic-unicorn.uf2` | 1.2.3 boot checked on a bare Pico W; 1.2.3 installed and ran on a Galactic Unicorn |
 | Pico 2 W, RP2350, 520 KB SRAM, 4 MB flash | `galactic_unicorn_2w` | `firmware-galactic-unicorn-2w.uf2` | 1.2.3 upgrade, MQTT and Home Assistant checked on a Galactic Unicorn |
 
 See [Verification scope](#verification-scope) for the 1.2.3 bench results, earlier checks and
@@ -206,6 +206,7 @@ upgrade from 1.2.2 to 1.2.3. Bench checks on 1.2.3 covered:
   state and showed the next normal notification.
 
 The 1.2.3 **Pico W** image booted to setup mode on a bare Pico W with no display attached.
+The same image was also installed on a Galactic Unicorn with a Pico W and ran normally.
 
 ### AWTRIX NG 1.2.2 and earlier
 
