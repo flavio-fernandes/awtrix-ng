@@ -12,6 +12,8 @@ entry points are
 You need PlatformIO, Python 3 and Node.js. The host tests also need CMake 3.20 or newer, Ninja and
 GCC. Node.js is used only by the step that embeds the [web UI](#the-embedded-web-ui), but a
 firmware build stops without it.
+PlatformIO's command line, `pio`, comes with
+[PlatformIO Core](https://docs.platformio.org/en/latest/core/installation/index.html).
 
 ```bash
 pio run  -e awtrix            # ESP32 firmware (the default environment)
@@ -128,7 +130,7 @@ See [Galactic Unicorn](site:rp2040/advanced/galactic-unicorn/) for flashing and 
 | Board | `rpipicow` / `rpipico2w` |
 | Framework | `arduino`, earlephilhower core |
 | Filesystem | 512 KiB LittleFS |
-| Source filter | `core/` without `core/synth/`, `core/audio/` and `core/script/` (but `EngineScriptApplication.cpp`), `hal/BoardRegistry.cpp`, `hal/GalacticUnicornBoard.cpp`, `platform/rp2040/` |
+| Source filter | `core/` without `core/synth/` and `core/audio/` (Berry scripting included), `hal/BoardRegistry.cpp`, `hal/GalacticUnicornBoard.cpp`, the GIF, icon and JPEG decoders in `media/`, `platform/rp2040/`, and a listed set of persistence, log and network files (`build_src_filter` in `platformio.ini`) |
 | Output | `.pio/build/<env>/firmware.uf2`, flashed over USB BOOTSEL |
 
 ```bash
@@ -206,6 +208,70 @@ and `tc002-loader` presets, is described in the [TC002 developer guide](site:tc0
 A compiler warning in AWTRIX code stops the build. With a newer compiler that warns about more,
 configure with `-DAWTRIX_WERROR=OFF`.
 
+#### macOS
+
+`CMakeLists.txt` refuses to configure on macOS (`if(NOT UNIX OR APPLE) ... FATAL_ERROR`), so
+build and run `awtrix-linux` inside a Linux container instead - no cross-compiler needed, since
+the image only runs locally:
+
+```bash
+cat > Dockerfile.linux-dev <<'EOF'
+FROM ubuntu:24.04
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake ninja-build libssl-dev liblzma-dev libjpeg-turbo8-dev \
+    openssl mosquitto python3 python3-pip git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /repo
+EOF
+docker build -t awtrix-linux-dev -f Dockerfile.linux-dev .
+
+pio pkg install -e native
+docker run --rm -v "$PWD":/repo -w /repo awtrix-linux-dev bash -c "
+  cmake --preset host
+  cmake --build --preset host --parallel
+"
+
+docker run -d --name awtrix-linux-dev -p 8080:8080 \
+  -v "$PWD":/repo -w /repo \
+  -v awtrix-linux-dev-data:/data \
+  awtrix-linux-dev \
+  ./build/host/awtrix-linux --data /data --port 8080 --webui /repo/webui/index.html \
+  --lan --listen 0.0.0.0
+```
+
+`--lan --listen 0.0.0.0` is required: without it, the bind stays loopback-only *inside the
+container*, which `-p 8080:8080` can't reach from the host - the container starts fine, but every
+request from outside is refused. `ctest --preset host --parallel 8` and any other `host` preset
+target build and run the same way, inside the same container.
+
+#### Running multiple clocks
+
+Every `awtrix-linux` instance is independent, keyed only by its `--data` directory and `--port`
+- so running several at once (to develop something that coordinates multiple displays, say) just
+means giving each its own. The `uid` in `GET /api/v1/device` comes from `--data`: two instances
+sharing a directory would share an identity too.
+
+On Linux, that's just another invocation:
+
+```bash
+build/host/awtrix-linux --data "$HOME/.local/share/awtrix-ng-dev-b" --port 8081 \
+  --webui "$PWD/webui/index.html"
+```
+
+On macOS, give the second instance its own container, port, and volume, reusing the same image:
+
+```bash
+docker run -d --name awtrix-linux-dev-b -p 8081:8081 \
+  -v "$PWD":/repo -w /repo \
+  -v awtrix-linux-dev-b-data:/data \
+  awtrix-linux-dev \
+  ./build/host/awtrix-linux --data /data --port 8081 --webui /repo/webui/index.html \
+  --lan --listen 0.0.0.0
+```
+
+Each is then reachable on its own port (`http://127.0.0.1:8080`, `http://127.0.0.1:8081`, …)
+with its own live preview, API and persistent state.
+
 ## The embedded web UI
 
 The tab sources live in `webui/src/`; `manifest.json` lists their assembly order.
@@ -213,7 +279,7 @@ The tab sources live in `webui/src/`; `manifest.json` lists their assembly order
 Linux. PlatformIO, CMake and the jsdom harness run the same assembler. Use
 `--check` to detect an outdated generated file without rewriting it.
 
-Before compiling, the `pre:scripts/build_webui.py` extra script assembles, minifies and gzips
+Before compiling, the `pre:scripts/build_webui.py` extra script assembles, minifies and compresses
 the HTML into `src/transport/http/WebUiAsset.h`. That header is generated and checked
 in. The compressed asset has a 92 KB budget; the build fails when it is exceeded. The header is
 rewritten only when `webui/index.html` has changed, so incremental builds stay incremental.
@@ -222,9 +288,40 @@ Minification runs `html-minifier-terser`, pinned to one exact version, through `
 has to be on `PATH`** whenever the web UI source has changed since the header was generated.
 Without `npx` the build stops rather than embedding an unminified asset.
 
+Compression uses Zopfli, whose output is ordinary gzip. The build installs the pinned `zopfli`
+Python package into `.pio/webui-tools` the first time it needs it. If that fails, it says so and
+falls back to `gzip -9`, which costs about 3 KB of flash. The size line at the top of the header
+names the compressor, so check it before committing a regenerated header.
+
 Commit source edits and generated HTML together. Merge the sources and rebuild;
 never merge `WebUiAsset.h` by hand. Commit a changed header separately. The TC002
 bundler checks that the HTML and embedded asset match their inputs.
+
+## Image size
+
+ESP32 images build with link-time optimisation, so a link takes about two and a half minutes.
+`post:scripts/firmware_size.py` edits the framework's link line for that. `src/system/SizeWraps.c`
+replaces mbedTLS error texts, C++ exception unwinding and heap poisoning. The script explains each
+one and what it saves.
+
+Every `__wrap_` function needs `__attribute__((used))`. Without it, the link fails with an
+undefined reference to that function.
+
+A corrupted heap block is not reported at `free()` in these builds. To hunt for one, remove the
+`multi_heap_` entries from `platformio.ini`.
+
+LTO takes stack canaries away from plain `char` buffers under the framework's `-fstack-protector`,
+so `pre:scripts/stack_protector.py` builds all code that handles outside input with
+`-fstack-protector-strong`. A new source file that parses network, file or script data belongs on
+its list. Berry's compiler stays off it, because it recurses per nesting level and its input is
+already code.
+
+Each of these changes how much stack a function takes. Scripts compile on the loop task, so after
+changing compiler flags, install a script with nested callbacks and check how much of its 12 KB
+stack is left, with `uxTaskGetStackHighWaterMark`.
+
+A panic on the classic ESP32 prints its backtrace and reboots, but writes no coredump. To get one
+from a clock, remove the two `esp_core_dump` entries from `[env:awtrix]`. The S3 writes them as usual.
 
 ## Partition tables are generated
 
@@ -320,21 +417,23 @@ PlatformIO installed through `pip`, plus Node.js for the firmware builds and the
 | Pico firmware build | `pio run -e <env>` | `galactic_unicorn`, `galactic_unicorn_2w`; uploads `uf2-<env>` with the `firmware.uf2` |
 | API docs match the firmware | `tools/check_docs_sync.py`, `check_flow_converter.py`, `gen_agent_skill.py --check`, `check_berry_api.py`, `check_prelude_solidified.py`, `check_font_sync.py`, `check_partitions.py`, `test_partition_reservations.py` | Documented fields and error codes, the flow converter's maps, the downloadable agent skill, the editor's Berry table, the solidified prelude, the generated panel fonts, every partition table and UF2 filesystem reservation |
 
-On a `v*` tag a release job also publishes every ESP32 update image, the USB install images for
-each supported flash size, the Galactic Unicorn UF2s (`firmware-galactic-unicorn.uf2`,
-`firmware-galactic-unicorn-2w.uf2`), the TC002 update package, the TC002 USB installation package with its
-corresponding sources, the TC002 desktop installers and the license notices. The tag must match
-`version`, and `docs/releases/<version>.md` must exist: the release body only links that page in
-each clock's documentation. The job depends on the native, web UI, TC002 image tools, TC002 update
-package, TC002 installer, firmware and documentation checks.
+A push to the default branch (`main` upstream) also builds the TC002 update package and the TC002 USB installation package with
+its corresponding sources. A `v*` tag runs only the release job: it takes every file from the
+successful run on the default branch for the same commit and publishes every ESP32 update image, the USB
+install images for each supported flash size, the Galactic Unicorn UF2s
+(`firmware-galactic-unicorn.uf2`, `firmware-galactic-unicorn-2w.uf2`), the TC002 packages and the
+license notices. So push to the default branch, wait until its run is green, then tag. The TC002 desktop
+installers are not part of a release: they live in `installer/tc002/`.
+The tag must match `version`, and `docs/releases/<version>.md` must exist: the release body only
+links that page in each clock's documentation.
 
 Other workflows:
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `docs.yml` | pushes and pull requests to `main`, and after a release | Builds this site with `tools/docs/build_site.py`: one documentation per clock (fails on broken links and anchors, and on text that names another clock), including the browser flasher and the TC002 browser installer, and publishes it to GitHub Pages |
-| `tc002-update.yml` | pushes to `main` and `v*` tags (called by `ci.yml`), and on dispatch | Builds `awtrix-ng-tc002.awup` from scratch: the musl toolchain (cached until the Buildroot version, configuration or patches change), the glibc toolchain, the kernel tree, `build_bundle.sh` and `tc002_install.py package`; then `tc002-sources.tar.gz` (`source_package.py`) and `usb-awtrix-ng-tc002.zip` (`browser_package.py`) |
-| `tc002-installer.yml` | `v*` tags (called by `ci.yml`), and pushes that change `tools/tc002/desktop/`, `tools/tc002/browser-image/`, `docs/assets/tc002/` | Builds and tests the TC002 desktop installer for Windows, macOS and Linux |
+| `docs.yml` | pushes and pull requests to `main`, and on the default branch after a release | Builds this site with `tools/docs/build_site.py`: one documentation per clock (fails on broken links and anchors, and on text that names another clock), including the browser flasher and the TC002 browser installer, and publishes it to GitHub Pages |
+| `tc002-update.yml` | pushes to the default branch (called by `ci.yml`), and on dispatch | Builds `awtrix-ng-tc002.awup` from scratch: the musl toolchain (cached until the Buildroot version, configuration or patches change), the glibc toolchain, the kernel tree, `build_bundle.sh` and `tc002_install.py package`; then `tc002-sources.tar.gz` (`source_package.py`) and `usb-awtrix-ng-tc002.zip` (`browser_package.py`) |
+| `tc002-installer.yml` | pushes and pull requests that change `tools/tc002/desktop/`, `tools/tc002/browser-image/`, `docs/assets/tc002/`, and on dispatch | Builds and tests the TC002 desktop installer for Windows, macOS and Linux; a new build is copied into `installer/tc002/` by hand |
 | `system-build.yml` | pull requests that change `firmware/buildroot/`, `tools/system/` | Cross-builds the experimental ARM userspace |
 | `discord-release.yml` | a published release, or dispatch by the release job | Announces a release |
 

@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "core/CoreEngine.h"
@@ -16,6 +17,7 @@
 #include "core/sound/PcmRouting.h"
 #include "core/sound/Rtttl.h"
 #include "core/synth/SongCache.h"
+#include "platform/posix/Hold.h"
 #include "platform/tc002/audio/PlaybackPitch.h"
 #include "platform/tc002/audio/Tc002AudioLink.h"
 #include "platform/tc002/audio/Tc002AudioMixer.h"
@@ -53,10 +55,9 @@ class Tc002AudioSink final : public sound::IToneSink, public sound::IPcmSink {
   // reaches the speaker, or Failed once it can no longer start.
   SystemStart systemStart(int64_t& audibleAtMs) const;
   bool systemFinished() const { return systemFinished_.load(); }
-  // Voice owns the speaker from capture start through audible TTS completion. A station and the
-  // loop wait meanwhile and play again once the voice lets go, the loop from its start.
-  void setVoiceOwned(bool owned);
+  posix::Hold claimVoiceChannel();
   bool voiceQuiet() const { return voiceQuiet_.load(); }
+  posix::Hold holdMusic();
 
   void begin() override {}
   void setVolumes(const sound::Volumes& volumes) override;
@@ -90,7 +91,14 @@ class Tc002AudioSink final : public sound::IToneSink, public sound::IPcmSink {
   bool playSong(const std::string& text, bool nextBar);
   bool playFx(const std::string& text);
   bool playSongOnce(const std::string& text, sound::Group group);
-  bool speaks() const { return available() && voice_ != nullptr; }
+  bool speaks() const { return available() && voice() != nullptr; }
+  bool speaking() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return request_.oneShot == Kind::Speech;
+  }
+  // The voice that speaks from the next speech on; one already speaking keeps its own. Any thread.
+  std::shared_ptr<speech::SpeechVoice> voice() const;
+  void setVoice(std::shared_ptr<speech::SpeechVoice> voice);
   bool checkSpeech(const std::string& text, DispatchDetail& detail);
   DispatchResult playSpeech(const std::string& text, sound::Group group, DispatchDetail& detail);
   bool songBeat(int64_t nowMs, double& beat) const;
@@ -160,6 +168,8 @@ class Tc002AudioSink final : public sound::IToneSink, public sound::IPcmSink {
     // Handed on to the one-shot's source, so a clip lives in one copy.
     std::shared_ptr<const std::string> clip;
     std::shared_ptr<const speech::Plan> speech;
+    // The voice whose frontend made the plan: phones are its own.
+    std::shared_ptr<speech::SpeechVoice> speechVoice;
     std::shared_ptr<const synth::Song> oneShotSong;
     std::vector<Effect> effects;
     // Host folders and files whose effects stop, in the order release() was asked.
@@ -205,7 +215,8 @@ class Tc002AudioSink final : public sound::IToneSink, public sound::IPcmSink {
   void systemGone(uint32_t seq);
   Tc002AudioPlayer::Tap analysisTap();
 
-  const std::shared_ptr<speech::SpeechVoice> voice_;
+  mutable std::mutex voiceMutex_;
+  std::shared_ptr<speech::SpeechVoice> voice_;
   CoreEngine& engine_;
   Tc002AudioLink link_;
   Tc002AudioPlayer player_;
@@ -232,8 +243,9 @@ class Tc002AudioSink final : public sound::IToneSink, public sound::IPcmSink {
   std::atomic<uint32_t> systemSeq_{0};
   std::atomic<SystemStart> systemStart_{SystemStart::None};
   std::atomic<bool> systemFinished_{false};
-  std::atomic<bool> voiceOwned_{false};
+  std::atomic<bool> voiceChannelClaimed_{false};
   std::atomic<bool> voiceQuiet_{false};
+  std::atomic<uint32_t> musicHolders_{0};
   std::atomic<int64_t> systemAudibleAtMs_{-1};
   int wake_[2] = {-1, -1};
   std::thread thread_;
@@ -250,7 +262,6 @@ class Tc002AudioSink final : public sound::IToneSink, public sound::IPcmSink {
   uint32_t mixedOneShotSeq_ = 0;
   uint32_t playingEffectsStopSeq_ = 0;
   uint32_t playingLoopSeq_ = 0;
-  // The voice held the loop back at the last reconcile, so no mixer carries it.
   bool loopHeld_ = false;
   uint32_t playingStreamSeq_ = 0;
   StreamSource* stream_ = nullptr;

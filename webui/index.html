@@ -417,10 +417,10 @@ details.appgrp:not([open]){gap:0}
 .appcfg .ctl :is(input[type=text],select,.days,.inheritcolor){width:100%}
 .appcfg .days{justify-content:flex-start}
 .appcfg .cfgsection{border-bottom:1px solid var(--brd2)}
-.appcfg .cfgsection>summary{display:flex;align-items:center;gap:10px;min-height:48px;padding:10px 0;cursor:pointer;list-style:none}
-.appcfg .cfgsection>summary::-webkit-details-marker{display:none}
-.appcfg .cfgsection>summary .ic{width:16px;height:16px;color:var(--dim);transform:rotate(-90deg);transition:transform .14s}
-.appcfg .cfgsection[open]>summary .ic{transform:rotate(0deg)}
+.cfgsection>summary{display:flex;align-items:center;gap:10px;min-height:48px;padding:10px 0;cursor:pointer;list-style:none}
+.cfgsection>summary::-webkit-details-marker{display:none}
+.cfgsection>summary .ic{width:16px;height:16px;color:var(--dim);transform:rotate(-90deg);transition:transform .14s}
+.cfgsection[open]>summary .ic{transform:rotate(0deg)}
 .appcfg .cfggrp{font-size:13px;font-weight:600;margin:0}
 .appcfg .cfgrows{padding-left:26px}
 .inheritcolor{display:grid;grid-template-columns:minmax(0,1fr) 86px;align-items:center;gap:10px}
@@ -1011,7 +1011,7 @@ const STR={
   bkSectionAp:'Restore',
   bkTitle:'Create backup',bkDownload:'Download backup',bkDownloadH:'Pick what to include, then save a .zip.',
   bkWorking:'Collecting…',bkDone:'Backup downloaded',bkAll:'All',
-  bkWifi:'Wi-Fi',bkSettings:'Settings',bkIcons:'Icons',bkMelodies:'Melodies',bkPalettes:'Palettes',bkMp3:'MP3s',bkScripts:'Scripts',bkApporder:'App order',
+  bkWifi:'Wi-Fi',bkSettings:'Settings',bkIcons:'Icons',bkMelodies:'Melodies',bkPalettes:'Palettes',bkMp3:'MP3s',bkRadio:'Radio stations',bkScripts:'Scripts',bkApporder:'App order',
   bkRestoreT:'Restore backup',bkRestore:'Choose backup…',
   bkRestoreH:'Upload a backup .zip.',
   bkCaptiveHint:'The Wi-Fi sign-in window can\'t upload files. To restore, open this page in a browser:',
@@ -1125,25 +1125,51 @@ const STR={
   //linux:begin
   gpNone:'No gamepad paired',gpPair:'Add gamepad',gpPairH:'Put the gamepad in pairing mode, then press Pair.',gpPairBtn:'Pair',gpForget:'Forget',gpPhone:'Phone',
   gpDevice:'Controller',gpPlayer:'Player',gpFull:'Forget a controller to add another.',
-  vcSection:'Home Assistant Voice',vcSectionH:'Hold the knob, speak, let go.',
-  vcOn:'Voice',vcOnH:'Off: the knob does nothing.',vcUrl:'Address',
-  vcToken:'Token',vcTokenH:'Long-lived token from your HA profile.',
-  vcTokenSet:'Saved',vcTokenNone:'None',vcTokenKeep:'Empty keeps it',vcTokenClear:'Remove',
-  vcPipe:'Pipeline',vcPipeH:'Needs STT and TTS.',vcPipeDef:'Default',vcSave:'Save and connect',
-  vcDev:'Room device',vcDevH:'Address of an HA device page. Its area is the room for "turn on the lights".',vcDevP:'Optional',
-  vcoffline:'Off',vcconnecting:'Connecting…',vcready:'Ready',vcstarting:'Starting…',vclistening:'Listening',
-  vcprocessing:'Thinking…',vcspeaking:'Speaking',vcerror:'Error',
-  vceconnectionLost:'HA unreachable',vcetokenRejected:'Token rejected',vcehaError:'HA error',
-  vcepipelineIncomplete:'Pipeline lacks STT/TTS',vcenothingUnderstood:'Not understood',vceaudioTooSlow:'Wi-Fi too slow',
-  vcetimeout:'HA too slow',vcemicrophoneFailed:'Microphone error',vceplaybackFailed:'Playback error',
-  vcemicrophoneUpdate:'Microphone update pending',vceconfigUnavailable:'Settings unreadable',
-  vcfurl:'Address only, no path',vcftoken:'Enter token again',vcfpipeline:'Pick a pipeline',vcfdevice:'Not a device address',vcfenabled:'Needs address and token',
+  vcSection:'Voice assistant',vcSectionH:'Ask the clock something and hear the answer.',
+  vcAssist:'Assistant',vcAssistH:'Who answers: Home Assistant or one of your apps.',vcAssistHa:'Home Assistant',
+  vcUnset:'Not set up',vcUnsetH:'Enter the address and token.',vcLast:'Last try:',
+  svSection:'Clock voice',svSectionH:'The voice that reads speech aloud, in its own language.',
+  svActive:'Voice',svNone:'No voice',svBuiltinTag:'built in',svBuiltin:'Use built-in',
+  svPack:'Voice pack',svPackH:'An .atts file. Replaces the built-in voice until you remove it.',
+  svUpload:'Upload',svLine:'Test',svLineP:'Hello, this is my voice.',svSay:'Speak',
+  capVoice:'voice recording',capSecret:'API key storage',
+  vcWake:'Wake word',vcWakeH:'Experimental. Say "Hey AWTRIX" to start, with the microphone always on.',vcWakeWait:'Waits until the assistant is ready.',
+  vcSens:'Sensitivity',vcSensH:'High hears you more easily but starts by mistake more often.',
+  vcSenslow:'Low',vcSensnormal:'Normal',vcSenshigh:'High',
+  vcHaBox:'Home Assistant settings',vcUrl:'Address',
+  vcToken:'Token',vcTokenH:'Create one in Home Assistant: your profile › Security.',vcTokenAgain:'Paste it again for this address',vcConnect:'Connect',
+  vcPipe:'HA assistant',vcPipeH:'Which voice assistant of Home Assistant answers.',vcPipeDef:'Default',
+  vcDev:'Room device',vcDevH:'Link to a device in this room, so "lights on" means here.',vcDevP:'Optional',
+  vcready:'Ready',vcstarting:'Starting…',vclistening:'Listening',vcprocessing:'Thinking…',vcspeaking:'Speaking',
+  vceconnectionLost:'No connection',vcxconnectionLost:'Check the address and that Home Assistant is running.',
+  vcetokenRejected:'Token refused',vcxtokenRejected:'Create a new token and paste it below.',
+  vcehaError:'Home Assistant error',vcxhaError:'Its log says why.',
+  vcepipelineIncomplete:'Speech not set up',vcxpipelineIncomplete:'Add speech-to-text and text-to-speech under Voice assistants in Home Assistant.',
+  vcenothingUnderstood:'Not understood',vcxnothingUnderstood:'Speak right after the clock starts listening.',
+  vceaudioTooSlow:'Wi-Fi too slow',vcxaudioTooSlow:'Move the clock closer to the router.',
+  vcetimeout:'Home Assistant too slow',vcxtimeout:'Try faster speech services.',
+  vcemicrophoneFailed:'Microphone error',vcxmicrophoneFailed:'Try again, or restart the clock.',
+  vceplaybackFailed:'Playback error',vcxplaybackFailed:'Use text-to-speech that answers in MP3 or WAV.',
+  vcemicrophoneUpdate:'Microphone update pending',vcxmicrophoneUpdate:'Keep the clock on USB power.',
+  vceconfigUnavailable:'Settings unreadable',vcxconfigUnavailable:'Choose the assistant and set it up again.',
+  vceappMissing:'App not available',vcxappMissing:'Install it or pick another assistant.',
+  vceappOff:'App switched off',vcxappOff:'Switch it on in the Apps tab.',
+  vceappBroken:'App has an error',vcxappBroken:'Open it in the Scripts tab.',
+  vcfurl:'Check the address',vcftoken:'Paste the token again',vcfpipeline:'Pick another one',vcfdevice:'Not a device link',vcfassistant:'Not a valid app name',
   ipOn:'iPhone link',ipOnH:'Then pair the clock on the iPhone under Settings › Bluetooth.',ipWait:'Waiting for iPhone',
   ipForget:'Forget iPhone',ipForgot:'Also forget the clock on the iPhone.',
   oaSection:'Sign-in',oaStatus:'Status',oaId:'Client ID',oaSecret:'Client secret',oaKeep:'Saved – type to replace',
   oaSecretPkce:'Not every provider needs one.',
   oaSignIn:'Sign in',oaSignOut:'Sign out',oaDone:'Signed in',oaInvalid:'@oauth line invalid',
   oasignedIn:'Signed in',oasignedOut:'Not signed in',oapending:'Signing in…',oaerror:'Sign-in failed',
+  seSection:'API keys',seSet:'Saved',seEmpty:'Not set',seRemove:'Remove',seInvalid:'Mistake in the app\'s code',
+  seHosts:'Goes only to',
+  seWarn:'Enter keys only for apps you trust. A web login protects them from other web pages.',
+  acTitle:'Help AWTRIX',
+  acWhy:'Counting TC002 clocks shows how many of them run AWTRIX NG. It is also the basis for a planned cooperation with Ulanzi, in which Ulanzi would support the project for every counted clock. That is the best way to make sure AWTRIX keeps running on future Ulanzi clocks.',
+  acWhat:'If you agree, this clock tells the AWTRIX Hub one time that it runs AWTRIX NG, with a code made from its chip ID. The report contains nothing about you: no name, no location, no usage data. It goes only to the Hub, not to Ulanzi. Ulanzi learns only how many clocks were counted. Your clock works exactly the same either way. Once sent, the report cannot be taken back: the Hub cannot tell which clock it came from.',
+  acState:'Status',acOff:'Not counted',acOffH:'You answered No. Count this clock to support AWTRIX.',acCount:'Count my clock',acDone:'Counted, thank you',
+  acYes:'Yes, count my clock',acNo:'No, thanks',acMore:'What exactly is sent?',acPrivacy:'Privacy policy',
   //linux:end
   mqRetry:'retry in',
   mqeNoWifi:'No Wi-Fi',mqeHost:'Host not found',mqeRefused:'Refused',
@@ -1268,11 +1294,11 @@ const APPF={
 const SET_GROUPS=[['bright','grpBright','grpBrightH'],['color','grpColor','grpColorH'],
  ['apps','grpApps','grpAppsH'],['text','grpText','grpTextH'],['overlay','grpOverlay','grpOverlayH']];
 /* TZ-DATA-START */
-/* GENERATED by scripts/tz_data.py from IANA tzdata 2026a - DO NOT EDIT BY HAND.
+/* GENERATED by scripts/tz_data.py from IANA tzdata 2026f - DO NOT EDIT BY HAND.
    Each row is one POSIX TZ rule and the zones that follow it. */
 const TZ_TABLE=[
+['<+00>0','Africa/Casablanca Africa/El_Aaiun'],
 ['<+00>0<+02>-2,M3.5.0/1,M10.5.0/3','Antarctica/Troll'],
-['<+01>-1','Africa/Casablanca Africa/El_Aaiun'],
 ['<+0330>-3:30','Asia/Tehran'],
 ['<+03>-3','Asia/Amman Asia/Baghdad Asia/Damascus Asia/Qatar Asia/Riyadh Europe/Istanbul Europe/Minsk'],
 ['<+0430>-4:30','Asia/Kabul'],
@@ -1323,8 +1349,8 @@ const TZ_TABLE=[
 ['CET-1CEST,M3.5.0,M10.5.0/3','Africa/Ceuta Europe/Andorra Europe/Belgrade Europe/Berlin Europe/Brussels Europe/Budapest Europe/Gibraltar Europe/Madrid Europe/Malta Europe/Paris Europe/Prague Europe/Rome Europe/Tirane Europe/Vienna Europe/Warsaw Europe/Zurich'],
 ['CST-8','Asia/Macau Asia/Shanghai Asia/Taipei'],
 ['CST5CDT,M3.2.0/0,M11.1.0/1','America/Havana'],
-['CST6','America/Bahia_Banderas America/Belize America/Chihuahua America/Costa_Rica America/El_Salvador America/Guatemala America/Managua America/Merida America/Mexico_City America/Monterrey America/Regina America/Swift_Current America/Tegucigalpa'],
-['CST6CDT,M3.2.0,M11.1.0','America/Chicago America/Indiana/Knox America/Indiana/Tell_City America/Matamoros America/Menominee America/North_Dakota/Beulah America/North_Dakota/Center America/North_Dakota/New_Salem America/Ojinaga America/Rankin_Inlet America/Resolute America/Winnipeg'],
+['CST6','America/Bahia_Banderas America/Belize America/Chihuahua America/Costa_Rica America/Edmonton America/El_Salvador America/Guatemala America/Inuvik America/Managua America/Merida America/Mexico_City America/Monterrey America/Regina America/Swift_Current America/Tegucigalpa'],
+['CST6CDT,M3.2.0,M11.1.0','America/Chicago America/Indiana/Knox America/Indiana/Tell_City America/Matamoros America/Menominee America/North_Dakota/Beulah America/North_Dakota/Center America/North_Dakota/New_Salem America/Ojinaga America/Rankin_Inlet America/Resolute'],
 ['ChST-10','Pacific/Guam'],
 ['EAT-3','Africa/Nairobi'],
 ['EET-2','Africa/Tripoli Europe/Kaliningrad'],
@@ -1332,7 +1358,7 @@ const TZ_TABLE=[
 ['EET-2EEST,M3.5.0/0,M10.5.0/0','Asia/Beirut'],
 ['EET-2EEST,M3.5.0/3,M10.5.0/4','Asia/Famagusta Asia/Nicosia Europe/Athens Europe/Bucharest Europe/Chisinau Europe/Helsinki Europe/Kyiv Europe/Riga Europe/Sofia Europe/Tallinn Europe/Vilnius'],
 ['EET-2EEST,M4.5.5/0,M10.5.4/24','Africa/Cairo'],
-['EST5','America/Cancun America/Jamaica America/Panama'],
+['EST5','America/Cancun America/Jamaica America/Panama America/Winnipeg'],
 ['EST5EDT,M3.2.0,M11.1.0','America/Detroit America/Grand_Turk America/Indiana/Indianapolis America/Indiana/Marengo America/Indiana/Petersburg America/Indiana/Vevay America/Indiana/Vincennes America/Indiana/Winamac America/Iqaluit America/Kentucky/Louisville America/Kentucky/Monticello America/New_York America/Port-au-Prince America/Toronto'],
 ['GMT0','Africa/Abidjan Africa/Bissau Africa/Monrovia Africa/Sao_Tome America/Danmarkshavn'],
 ['GMT0BST,M3.5.0/1,M10.5.0','Europe/London'],
@@ -1345,13 +1371,13 @@ const TZ_TABLE=[
 ['JST-9','Asia/Tokyo'],
 ['KST-9','Asia/Pyongyang Asia/Seoul'],
 ['MSK-3','Europe/Kirov Europe/Moscow Europe/Simferopol Europe/Volgograd'],
-['MST7','America/Dawson America/Dawson_Creek America/Fort_Nelson America/Hermosillo America/Mazatlan America/Phoenix America/Whitehorse'],
-['MST7MDT,M3.2.0,M11.1.0','America/Boise America/Cambridge_Bay America/Ciudad_Juarez America/Denver America/Edmonton America/Inuvik'],
+['MST7','America/Dawson America/Dawson_Creek America/Fort_Nelson America/Hermosillo America/Mazatlan America/Phoenix America/Vancouver America/Whitehorse'],
+['MST7MDT,M3.2.0,M11.1.0','America/Boise America/Cambridge_Bay America/Ciudad_Juarez America/Denver'],
 ['NST3:30NDT,M3.2.0,M11.1.0','America/St_Johns'],
 ['NZST-12NZDT,M9.5.0,M4.1.0/3','Pacific/Auckland'],
 ['PKT-5','Asia/Karachi'],
 ['PST-8','Asia/Manila'],
-['PST8PDT,M3.2.0,M11.1.0','America/Los_Angeles America/Tijuana America/Vancouver'],
+['PST8PDT,M3.2.0,M11.1.0','America/Los_Angeles America/Tijuana'],
 ['SAST-2','Africa/Johannesburg'],
 ['SST11','Pacific/Pago_Pago'],
 ['UTC0','UTC'],
@@ -1510,7 +1536,7 @@ function readAudioCaps(caps){
   S.caps=caps;
   S.scripting=caps.scripting!==false;
   const a=caps.audio||{};
-  S.aud={rtttl:a.rtttl===true,track:a.track===true,mp3:a.mp3===true,radio:a.radio===true};
+  S.aud={rtttl:a.rtttl===true,track:a.track===true,mp3:a.mp3===true,radio:a.radio===true,speech:a.speech===true};
   S.microphone=caps.microphone===true;
   //linux:begin
   S.gamepad=caps.gamepad===true&&caps.ble===true;
@@ -1520,7 +1546,9 @@ function readAudioCaps(caps){
   S.iphone=caps.ble===true;
   S.mqttTls=caps.mqttTls===true;
   S.oauth=caps.oauth===true;
-  if(S.oauth)loadOauthApps();
+  S.secret=caps.secret===true;
+  S.activation=caps.activation===true;
+  loadScriptSections();
   //linux:end
   if(typeof caps.sensors?.light==='boolean')S.light=caps.sensors.light;
   if(Object.hasOwn(caps,'gpio')){
@@ -1545,11 +1573,13 @@ function editorMax(){const {width,height}=displayGeometry();return width+'x'+hei
 // The names a script can ask for with @needs, each a boolean in /api/v1/capabilities. The same
 // list is in test/fixtures/script_header_vectors.json; script-header.test.js keeps both equal.
 const CAP_NAMES=['audio.mp3','audio.rtttl','audio.song','audio.speech','audio.track','audio.radio','audio.effect','microphone','sensors.light','ble','gamepad','oauth','crypto','tcp'];
-//linux:begin
-CAP_NAMES.push('layout');
-//linux:end
 const CAP_WORDS={gamepad:'capGamepad',ble:'capBle','audio.effect':'capEffect','audio.song':'capSong',microphone:'capMic','audio.speech':'capSpeech','audio.mp3':'capMp3',
   'audio.radio':'capRadio','audio.rtttl':'capRtttl','audio.track':'capTrack','sensors.light':'capLight',oauth:'capOauth',crypto:'capCrypto',tcp:'capTcp'};
+//linux:begin
+CAP_NAMES.push('layout','voice','secret');
+CAP_WORDS.voice='capVoice';
+CAP_WORDS.secret='capSecret';
+//linux:end
 function capPresent(name){
   let v=S.caps;
   for(const k of String(name).split('.'))v=v&&typeof v==='object'?v[k]:undefined;
@@ -1820,7 +1850,8 @@ const WIDGETS={
     return{input,get:()=>numeric?Number(input.value):input.value,set:v=>input.value=String(v)};
   },
   number(ctl,def,value,onInput){
-    const input=el('input',{type:'number',min:def.min,max:def.max,step:def.step??1,value});
+    const input=el('input',{type:'number',min:def.min,max:def.max,step:def.step??1,value,
+      placeholder:def.ph||null});
     input.addEventListener('input',onInput);
     ctl.append(def.unit
       ?el('span',{class:'unitwrap',style:'--ul:'+def.unit.length+'ch'},input,el('span',{class:'unit'},def.unit))
@@ -1950,7 +1981,7 @@ const WIDGETS={
       set:v=>input.value=typeof v==='string'?v:JSON.stringify(v)};
   },
   text(ctl,def,value,onInput,key){
-    const input=el('input',{type:'text',value:value??''});
+    const input=el('input',{type:'text',value:value??'',placeholder:def.ph||null});
     if(def.list){
       const id='dl_'+key;input.setAttribute('list',id);
       if(!document.getElementById(id))document.body.append(el('datalist',{id},def.list.map(v=>el('option',{value:v}))));
@@ -2372,6 +2403,7 @@ function cfgDef(f,builtin){
   const d={w:f.type==='bool'?'toggle':f.type,l:l||f.label||f.key,
     h:l?h:f.help||'',
     min:f.min,max:f.max,step:f.step,unit:f.unit,dflt:f.default,
+    ph:typeof f.hint==='string'?f.hint:'',
     nullable:!!f.nullable,numericColor:!!builtin||!!f.nullable,linkLabel:true};
   if(f.type==='select')d.opt=(f.options||[]).map(o=>{
     const x=opt&&opt.find(x=>String(x[0])===String(o));
@@ -2462,7 +2494,7 @@ async function fillConfigPanel(name,box,saveError,builtin){
 }
 async function viewApps(view){
   //linux:begin
-  loadOauthApps();
+  loadScriptSections();
   //linux:end
   let loop=[],background=[],ondemand=[],disabled=[],modules=[],dragFrom=null,saving=Promise.resolve();
   const panels=new Map(),infos=new Map();
@@ -2511,7 +2543,7 @@ async function viewApps(view){
   function cfgPanel(a){
     const key=a.origin+':'+a.name;
     //linux:begin
-    if(a.origin!=='builtin'&&S.oauthApps&&S.oauthApps.has(a.name))a={...a,config:true};
+    if(a.origin!=='builtin'&&hasScriptSection(a.name))a={...a,config:true};
     //linux:end
     if(!a.config||panelTaken.has(key))return[null,null];
     panelTaken.add(key);
@@ -2824,6 +2856,8 @@ async function collectBackup(cats){
     entries.push({name:'MELODIES/'+m.name+'.txt',data:m.rtttl});included.push('melodies');}
   if(cats.palettes){await grab('/PALETTES');included.push('palettes');}
   if(cats.mp3){await grab('/MP3');included.push('mp3');}
+  if(cats.radio){entries.push({name:'radio.json',
+    data:JSON.stringify({stations:(await api('/api/v1/audio/stations')).data.stations||[]})});included.push('radio');}
   if(cats.scripts){await grab('/SCRIPTS');
     for(const s of(await api('/api/v1/audio/mp3')).data.scripts||[])for(const f of s.files){const p='SCRIPTS/'+s.name+'/'+f.name;
       entries.push({name:p,data:await bytes('/'+p)});}
@@ -2863,7 +2897,7 @@ window.addEventListener('beforeunload',e=>{if(scrDraft&&scrDraft.dirty)e.prevent
    Device API from ScriptBindings.cpp + Prelude.h; language builtins from
    Berry's be_baselib.c and the modules berry_conf.h enables. Regenerated on
    every build, so adding a binding is all it takes to teach the editor. */
-const BERRY_API=["bar_chart(list, paint?, autoscale?, x0?)","circle(cx, cy, r, color)","circle_fill(cx, cy, r, color)","clear(color?)","day()","effect(name, settings?)","effects()","epoch_ms()","font(name)","height()","hour()","hsv(h, s, v)","icon(name, x, y)","line(x0, y0, x1, y1, color)","line_chart(list, paint?, autoscale?, x0?)","log(value)","minute()","month()","now_ms()","overlay(name, settings?)","overlays()","pixel(x, y, color)","progress(pct, paint?, bg?, x0?)","ramp_text(x, y, str, palette, span?, speed?)","rect(x, y, w, h, color)","rect_fill(x, y, w, h, color)","rgb(r, g, b)","scroll_text(txt, color?, opts?)","scroll_text(x, y, w, txt, color, opts?)","second()","text(x, y, txt, color?)","text_ink_width(txt)","text_width(txt)","version()","weekday()","width()","year()","clamp(v, lo, hi)","display.is_on()","display.power(on)","http.delete(url, cb, opts?)","http.get(url, cb, opts?)","http.patch(url, body, cb, opts?)","http.post(url, body, cb, opts?)","http.put(url, body, cb, opts?)","http.request(method, url, cb, opts?)","max(a, b)","min(a, b)","mqtt.publish(topic, payload)","mqtt.subscribe(topic, cb)","music.bands(n?, max?)","music.beat()","music.level()","music.playing()","music.station()","music.title()","notify(spec)","num(v, dflt?)","re.match(pattern, text)","re.matchall(pattern, text)","re.search(pattern, text)","rotation.close()","rotation.next()","rotation.pause()","rotation.previous()","rotation.resume()","rotation.show()","round(v, digits?)","sensor.battery()","sensor.battery_volts()","sensor.humidity()","sensor.light()","sensor.pressure()","sensor.temperature()","settings.apply_case(str)","settings.get(key)","settings.set(key, value)","shared.age(key)","shared.get(key, dflt?)","shared.keys(owner?)","shared.set(key, value)","sound.can(key?)","sound.play(x)","sound.playing()","sound.stop(what?)","store.get(k, dflt?)","store.set(k, v)","timer.after(ms, callback)","timer.cancel(id)","timer.every(ms, callback)","modbus.readHoldingRegisters(host, address, count, callback, opts?)","modbus.readInputRegisters(host, address, count, callback, opts?)","modbus.readCoils(host, address, count, callback, opts?)","modbus.readDiscreteInputs(host, address, count, callback, opts?)","modbus.int16(value)","modbus.int32(high, low)","modbus.float32(high, low)"];
+const BERRY_API=["bar_chart(list, paint?, autoscale?, x0?)","circle(cx, cy, r, color)","circle_fill(cx, cy, r, color)","clear(color?)","day()","effect(name, settings?)","effects()","epoch_ms()","font(name)","height()","hour()","hsv(h, s, v)","icon(name, x, y)","line(x0, y0, x1, y1, color)","line_chart(list, paint?, autoscale?, x0?)","log(value)","minute()","month()","now_ms()","overlay(name, settings?)","overlays()","pixel(x, y, color)","progress(pct, paint?, bg?, x0?)","ramp_text(x, y, str, palette, span?, speed?)","rect(x, y, w, h, color)","rect_fill(x, y, w, h, color)","rgb(r, g, b)","scroll_text(txt, color?, opts?)","scroll_text(x, y, w, txt, color, opts?)","second()","text(x, y, txt, color?)","text_ink_width(txt)","text_width(txt)","version()","weekday()","width()","year()","clamp(v, lo, hi)","display.is_on()","display.power(on)","http.cancel(id)","http.delete(url, cb, opts?)","http.get(url, cb, opts?)","http.patch(url, body, cb, opts?)","http.post(url, body, cb, opts?)","http.put(url, body, cb, opts?)","http.request(method, url, cb, opts?)","max(a, b)","min(a, b)","mqtt.publish(topic, payload)","mqtt.subscribe(topic, cb)","music.bands(n?, max?)","music.beat()","music.level()","music.playing()","music.station()","music.title()","notify(spec)","num(v, dflt?)","re.match(pattern, text)","re.matchall(pattern, text)","re.search(pattern, text)","rotation.close()","rotation.next()","rotation.pause()","rotation.previous()","rotation.resume()","rotation.show()","round(v, digits?)","sensor.battery()","sensor.battery_volts()","sensor.humidity()","sensor.light()","sensor.pressure()","sensor.temperature()","settings.apply_case(str)","settings.get(key)","settings.set(key, value)","shared.age(key)","shared.get(key, dflt?)","shared.keys(owner?)","shared.set(key, value)","sound.can(key?)","sound.play(x)","sound.playing()","sound.stop(what?)","store.get(k, dflt?)","store.set(k, v)","timer.after(ms, callback)","timer.cancel(id)","timer.every(ms, callback)","modbus.readHoldingRegisters(host, address, count, callback, opts?)","modbus.readInputRegisters(host, address, count, callback, opts?)","modbus.readCoils(host, address, count, callback, opts?)","modbus.readDiscreteInputs(host, address, count, callback, opts?)","modbus.int16(value)","modbus.int32(high, low)","modbus.float32(high, low)"];
 const BERRY_MODS=["display","http","mqtt","music","re","rotation","sensor","settings","shared","sound","store","timer"];
 const BERRY_CORE=["assert","bool","call","classname","classof","compile","format","gc","global","input","int","isinstance","issubclass","json","math","module","number","print","real","size","str","strict","string","super","type","modbus"];
 //linux:begin
@@ -4100,7 +4134,9 @@ function systemPage(view,data){
   //linux:begin
   if(S.gamepad)gamepadSection(page);
   if(S.voice)voiceSection(page);
+  if(S.aud?.speech)speechVoiceSection(page);
   if(S.iphone)iphoneSection(page);
+  if(S.activation&&!S.ap)activationSection(page);
   if(S.mqttTls&&sysFields.mqttTls){
     const tl=sysFields.mqttTls,mp=sysFields.mqttPort;
     if(tl&&mp)tl.row.querySelector('input').addEventListener('change',()=>{
@@ -4230,9 +4266,20 @@ function hubTokenSection(page){
 }
 //linux:begin
 document.head.append(el('style',null,`
-#sec-voice .badge:not(.bad){flex:none;white-space:nowrap;word-break:normal}
-#sec-voice .ctl{flex-wrap:wrap}
-#sec-voice .ctl input[type=password]{flex:1 1 180px}
+#sec-voice .badge{flex:none;font-size:12.5px;padding:5px 11px;white-space:nowrap;word-break:normal}
+#sec-voice .badge:not(.good,.bad){border:1px solid var(--brd2)}
+#sec-voice .badge::before{content:'';display:inline-block;width:8px;height:8px;margin-right:7px;border-radius:50%;background:currentColor}
+#sec-voice>.rows{padding-bottom:0;margin-bottom:-1px}
+#sec-voice .cfggrp{font-size:13.5px;font-weight:500;margin:0}
+@media(max-width:760px){
+  #sec-voice .vcstate{grid-template-columns:auto minmax(0,1fr)}
+  #sec-voice .vcstate .lab{display:contents}
+  #sec-voice .vcstate .ctl{justify-content:flex-end}
+  #sec-voice .vcstate .help{grid-row:2;grid-column:1/-1}
+  #sec-voice .badge{flex:initial;white-space:normal}
+}
+#sec-voice .ctl,.cfgsection.secret .ctl{flex-wrap:wrap}
+#sec-voice .ctl input[type=password],.cfgsection.secret .ctl input[type=password]{flex:1 1 180px}
 `));
 const GPSTATE={ready:'mqup',waiting:'mqdown',connecting:'mqbusy',pairing:'scanning'};
 function gamepadSection(page){
@@ -4286,67 +4333,155 @@ function gamepadSection(page){
   poller(load,()=>!cur||cur.devices?.some(p=>p.state==='pairing'||p.state==='connecting')?2000:5000);
 }
 function voiceSection(page){
-  const state=el('div',{class:'badge'}),tokenState=el('div',{class:'badge'});
+  const OFF='off',HA='ha',APP='app:',UNLINKED=['offline','connecting','error'];
+  const assist=el('select',{'aria-label':t('vcAssist')});
+  assist.addEventListener('change',()=>store({assistant:assist.value}));
+  const state=el('div',{class:'badge'}),hint=el('span');
+  const stateRow=actionRow(t('oaStatus'),hint,[state]);
+  stateRow.classList.add('vcstate');
+  const wakeHint=el('span');
+  const wake=mkSwitch(false,()=>store({wakeWord:wake.input.checked}));
+  const wakeRow=actionRow(t('vcWake'),wakeHint,[wake.node]);
+  const sens=el('select',{'aria-label':t('vcSens')},['low','normal','high'].map(v=>el('option',{value:v},t('vcSens'+v))));
+  sens.addEventListener('change',()=>store({wakeSensitivity:sens.value}));
+  const sensRow=actionRow(t('vcSens'),t('vcSensH'),[sens]);
   const url=el('input',{type:'text',inputmode:'url',autocomplete:'off',spellcheck:'false',placeholder:'http://homeassistant.local:8123','aria-label':t('vcUrl')});
   const token=el('input',{type:'password',autocomplete:'new-password',spellcheck:'false','aria-label':t('vcToken')});
+  const clear=armable(el('button',null,t('seRemove')),()=>store({clearToken:true}));
+  const connect=el('button',{class:'pri'},t('vcConnect'));
   const pipe=el('select',{'aria-label':t('vcPipe')});
+  pipe.addEventListener('change',()=>store({pipeline:pipe.value}));
+  const pipeRow=actionRow(t('vcPipe'),t('vcPipeH'),[pipe]);
   const dev=el('input',{type:'text',autocomplete:'off',spellcheck:'false',placeholder:t('vcDevP'),'aria-label':t('vcDev')});
-  const on=mkSwitch(false,()=>store({enabled:on.input.checked},t('saved')));
-  const save=el('button',{class:'pri'},t('vcSave'));
-  let cur=null,pipes='';
-  const clear=armable(el('button',null,t('vcTokenClear')),()=>store({clearToken:true,enabled:false},t('saved')));
-  const reason=code=>code?(STR['vce'+code]?t('vce'+code):code):'';
+  dev.addEventListener('change',()=>{
+    dev.value=dev.value.trim().split(/[/?#]/).filter(Boolean).pop()||'';
+    store({device:dev.value});
+  });
+  const devRow=actionRow(t('vcDev'),t('vcDevH'),[dev]);
+  const{box,rows}=scriptSectionBox('haset',t('vcHaBox'));
+  rows.append(actionRow(t('vcUrl'),null,[url]),actionRow(t('vcToken'),t('vcTokenH'),[token,clear]),
+    el('div',{class:'frow full'},el('div',{class:'ctl'},connect)),pipeRow,devRow);
+  let cur=null,pipes='',apps='',opened=false;
+  const reason=code=>STR['vce'+code]?t('vce'+code):code;
+  const fix=code=>STR['vcx'+code]||'';
+  const show=(nodes,on)=>{for(const node of nodes)node.style.display=on?'':'none';};
+  const warn=(node,on)=>node.parentNode.classList.toggle('warn',on);
+  const originOf=v=>{
+    try{return new URL(/^https?:\/\//i.test(v)?v:'http://'+v).origin;}
+    catch(e){return v;}
+  };
+  const checkConnect=()=>{
+    const c=cur.config,kept=c.tokenSet&&originOf(url.value.trim())===originOf(c.url);
+    connect.disabled=!url.value.trim()||!(token.value.trim()||kept);
+    token.placeholder=kept?t('oaKeep'):c.tokenSet?t('vcTokenAgain'):'';
+  };
+  function status(d,setUp){
+    if(d.error)return[reason(d.error),' bad',fix(d.error)];
+    if(!setUp)return[t('vcUnset'),'',t('vcUnsetH')];
+    const last=d.lastError?t('vcLast')+' '+reason(d.lastError)+'. '+fix(d.lastError):'';
+    if(UNLINKED.includes(d.state))return[t('mqbusy'),'',last];
+    return[t('vc'+d.state),' good',last];
+  }
   function paint(d){
     const first=!cur;cur=d;
-    const c=d.config||{};
-    if(first){url.value=c.url||'';dev.value=c.device||'';}
-    on.input.checked=!!c.enabled;
-    tokenState.className='badge'+(c.tokenSet?' good':'');
-    tokenState.replaceChildren(t(c.tokenSet?'vcTokenSet':'vcTokenNone'));
-    token.placeholder=c.tokenSet?t('vcTokenKeep'):'';
-    clear.disabled=!c.tokenSet;
-    const list=(d.pipelines||[]).filter(p=>p.stt_engine&&p.tts_engine);
-    const sig=JSON.stringify(list);
-    if(first||sig!==pipes){
-      pipes=sig;
-      const want=first?c.pipeline||'':pipe.value;
-      pipe.replaceChildren(el('option',{value:''},t('vcPipeDef')),
-        ...list.map(p=>el('option',{value:p.id},p.name||p.id)));
-      if(want&&!list.some(p=>p.id===want))pipe.append(el('option',{value:want},want));
-      pipe.value=want;
+    const c=d.config,target=c.assistant,off=target===OFF,ha=target===HA;
+    const app=target.startsWith(APP)?target.slice(APP.length):'';
+    if(first){url.value=c.url;dev.value=c.device;}
+    const names=d.assistantApps,listed=app&&!names.includes(app)?[...names,app]:names;
+    const appsSig=JSON.stringify(listed);
+    if(appsSig!==apps){
+      apps=appsSig;
+      assist.replaceChildren(el('option',{value:OFF},t('mqoff')),el('option',{value:HA},t('vcAssistHa')),
+        ...listed.map(n=>el('option',{value:APP+n},n)));
     }
-    const why=c.enabled?reason(d.error):'';
-    state.className='badge'+(why?' bad':d.state==='ready'?' good':'');
-    state.replaceChildren(why||t('vc'+d.state));
+    assist.value=target;
+    const setUp=!ha||(!!c.url&&c.tokenSet),linked=!UNLINKED.includes(d.state);
+    const[text,cls,help]=status(d,setUp);
+    state.className='badge'+cls;
+    state.replaceChildren(text);
+    hint.replaceChildren(help);
+    warn(hint,!d.error&&!!d.lastError);
+    show([stateRow],!off||!!d.error);
+    const hears=d.wakeWordAvailable&&!off&&setUp;
+    const waiting=c.wakeWord&&!d.wakeListening&&(d.state==='ready'||!linked);
+    wake.input.checked=c.wakeWord;
+    sens.value=c.wakeSensitivity;
+    wakeHint.replaceChildren(t(waiting?'vcWakeWait':'vcWakeH'));
+    warn(wakeHint,waiting);
+    show([wakeRow],hears);
+    show([sensRow],hears&&c.wakeWord);
+    show([box],ha);
+    const want=ha&&(!setUp||(!linked&&!!d.error))?true:linked?false:opened;
+    if(want!==opened&&!box.contains(document.activeElement?.closest('input'))){opened=want;box.open=want;}
+    show([clear],c.tokenSet);
+    checkConnect();
+    const speech=d.pipelines.filter(p=>p.stt_engine&&p.tts_engine).map(p=>[p.id,p.name||p.id]);
+    const choices=c.pipeline&&!speech.some(([id])=>id===c.pipeline)?[...speech,[c.pipeline,c.pipeline]]:speech;
+    const sig=JSON.stringify(choices);
+    if(sig!==pipes){
+      pipes=sig;
+      pipe.replaceChildren(el('option',{value:''},t('vcPipeDef')),...choices.map(([id,name])=>el('option',{value:id},name)));
+    }
+    pipe.value=c.pipeline;
+    show([pipeRow],speech.length>0);
+    show([devRow],linked||!!c.device);
   }
   async function load(){paint((await api('/api/v1/voice',{timeout:4000})).data);}
-  async function store(body,done){
-    save.disabled=true;
+  async function store(body){
+    connect.disabled=true;
     try{
-      await api('/api/v1/voice',{method:'POST',headers:{'Content-Type':'application/json','X-Awtrix-Voice':'1'},body:JSON.stringify(body)});
+      await ownPageSend('/api/v1/voice','X-Awtrix-Voice','POST',body);
       if(body.token)token.value='';
-      toast(done);
+      toast(t('saved'));
     }catch(e){
       toast(e.code==='validationFailed'&&STR['vcf'+e.field]?t('vcf'+e.field):e.message,false);
     }
-    save.disabled=false;
+    checkConnect();
     try{await load();}catch(e){}
   }
-  save.addEventListener('click',()=>{
-    const body={url:url.value.trim(),pipeline:pipe.value,device:dev.value.trim().split(/[/?#]/).filter(Boolean).pop()||'',enabled:true};
-    dev.value=body.device;
-    if(token.value)body.token=token.value;
-    store(body,t('saved'));
+  url.addEventListener('input',checkConnect);
+  token.addEventListener('input',checkConnect);
+  connect.addEventListener('click',()=>{
+    connect.focus();
+    const body={url:originOf(url.value.trim())},secret=token.value.trim();
+    url.value=body.url;
+    if(secret)body.token=secret;
+    store(body);
   });
-  page.section('voice',t('vcSection'),t('vcSectionH'),[
-    actionRow(t('mqStatus'),null,[state]),
-    actionRow(t('vcOn'),t('vcOnH'),[on.node]),
-    actionRow(t('vcUrl'),null,[url]),
-    actionRow(t('vcToken'),t('vcTokenH'),[tokenState,token,clear]),
-    actionRow(t('vcPipe'),t('vcPipeH'),[pipe]),
-    actionRow(t('vcDev'),t('vcDevH'),[dev]),
-    actionRow('',null,[save])]);
+  for(const field of[url,token])field.addEventListener('keydown',e=>{if(e.key==='Enter'&&!connect.disabled)connect.click();});
+  const details=[stateRow,wakeRow,sensRow,box];
+  show(details,false);
+  page.section('voice',t('vcSection'),t('vcSectionH'),[actionRow(t('vcAssist'),t('vcAssistH'),[assist]),...details]);
   poller(load,2000);
+}
+const SV='/api/v1/speech/voice';
+function speechVoiceSection(page){
+  const info=el('div',{class:'badge'});
+  const fileIn=el('input',{type:'file',accept:'.atts',style:'display:none'});
+  const up=el('button',null,t('svUpload'));up.addEventListener('click',()=>fileIn.click());
+  const done=r=>{paint(r.data);toast(t('saved'));};
+  const builtin=armable(el('button',{style:'display:none'},t('svBuiltin')),()=>req('DELETE',SV).then(done,toastErr));
+  const line=el('input',{type:'text',placeholder:t('svLineP'),'aria-label':t('svLine')});
+  const say=el('button',null,t('svSay'));
+  say.addEventListener('click',()=>post('/api/v1/audio/play',{speech:line.value.trim()||t('svLineP')}).catch(toastErr));
+  fileIn.addEventListener('change',async()=>{
+    const f=fileIn.files[0];fileIn.value='';
+    if(!f)return;
+    const fd=new FormData();fd.append('voice',f,f.name);
+    up.disabled=true;
+    try{done(await api(SV,{method:'POST',body:fd,timeout:60000}));}catch(e){toastErr(e);}
+    up.disabled=false;
+  });
+  function paint(d){
+    info.className='badge'+(d.name?' good':' bad');
+    info.replaceChildren(d.name?d.name+' · '+String(d.language).toUpperCase()+(d.uploaded?'':' · '+t('svBuiltinTag')):t('svNone'));
+    builtin.style.display=d.uploaded?'':'none';
+  }
+  page.section('speechvoice',t('svSection'),t('svSectionH'),[
+    actionRow(t('svActive'),null,[info,builtin]),
+    actionRow(t('svPack'),t('svPackH'),[up,fileIn]),
+    actionRow(t('svLine'),null,[line,say])]);
+  api(SV,{timeout:4000}).then(r=>paint(r.data),()=>{});
 }
 const IPSTATE={off:'mqoff',waiting:'ipWait',connecting:'mqbusy',ready:'mqup'};
 function brokerTrustRows(page){
@@ -4401,29 +4536,21 @@ function iphoneSection(page){
     actionRow(t('mqStatus'),null,[state,forget])]);
   poller(load,()=>cur.state==='connecting'?2000:5000);
 }
-const OAUTH='/api/v1/oauth/';
-const oauthSend=(path,body,method='POST')=>api(OAUTH+path,{method,
-  headers:{'Content-Type':'application/json','X-Awtrix-OAuth':'1'},body:JSON.stringify(body||{})});
-async function loadOauthApps(){
-  if(!S.oauth||S.oauthLoading)return;
-  S.oauthLoading=true;
-  try{
-    const{data}=await api('/api/v1/oauth');
-    const names=(data.apps||[]).map(a=>a.name).sort();
-    if(names.join('\n')!==[...(S.oauthApps||[])].sort().join('\n')){
-      S.oauthApps=new Set(names);
-      if(location.hash.startsWith('#/apps'))render();
-    }
-  }catch(e){}
-  S.oauthLoading=false;
+const ownPageSend=(url,marker,method,body)=>api(url,{method,
+  headers:{'Content-Type':'application/json',[marker]:'1'},body:JSON.stringify(body||{})});
+function scriptSectionBox(cls,title,open){
+  const rows=el('div',{class:'cfgrows'});
+  const box=el('details',{class:'cfgsection '+cls},
+    el('summary',null,icon('chev'),el('h3',{class:'cfggrp'},title)),rows);
+  box.open=!!open;
+  return{box,rows};
 }
+const OAUTH='/api/v1/oauth/';
+const oauthSend=(path,method,body)=>ownPageSend(OAUTH+path,'X-Awtrix-OAuth',method,body);
 async function oauthSection(name,open){
   const path=encodeURIComponent(name);
   const{data:s}=await api(OAUTH+path);
-  const rows=el('div',{class:'cfgrows'});
-  const box=el('details',{class:'cfgsection oauth'},
-    el('summary',null,icon('chev'),el('h3',{class:'cfggrp'},t('oaSection')+(s.provider?' · '+s.provider:''))),rows);
-  box.open=!!open;
+  const{box,rows}=scriptSectionBox('oauth',t('oaSection')+(s.provider?' · '+s.provider:''),open);
   const reload=async()=>box.replaceWith(await oauthSection(name,box.open));
   const id=el('input',{type:'text',autocomplete:'off',spellcheck:'false',value:s.clientId||'','aria-label':t('oaId')});
   const secret=el('input',{type:'password',autocomplete:'new-password',spellcheck:'false','aria-label':t('oaSecret'),
@@ -4437,16 +4564,16 @@ async function oauthSection(name,open){
     if(id.value.trim()===(s.clientId||'')&&!secret.value)return;
     const body={clientId:id.value.trim()};
     if(secret.value)body.clientSecret=secret.value;
-    await oauthSend(path,body);
+    await oauthSend(path,'POST',body);
   }
   save.addEventListener('click',async()=>{
     try{await store();toast(t('saved'));await reload();}catch(e){toastErr(e);}
   });
   go.addEventListener('click',async()=>{
     try{
-      if(s.state==='signedIn'){await oauthSend(path,null,'DELETE');await reload();return;}
+      if(s.state==='signedIn'){await oauthSend(path,'DELETE');await reload();return;}
       await store();
-      const{data}=await oauthSend(path+'/start');
+      const{data}=await oauthSend(path+'/start','POST');
       location.assign(data.url);
     }catch(e){toastErr(e);}
   });
@@ -4456,17 +4583,70 @@ async function oauthSection(name,open){
     el('div',{class:'cfgbar'},el('span',{class:'grow'}),save,go));
   return box;
 }
-// Scripts with an @oauth line get the sign-in as their own first section, also after every save.
+const SECRETS='/api/v1/secrets/';
+const secretSend=(path,method,body)=>ownPageSend(SECRETS+path,'X-Awtrix-Secret',method,body);
+async function secretSection(name,open){
+  const path=encodeURIComponent(name);
+  const{data:s}=await api(SECRETS+path);
+  const{box,rows}=scriptSectionBox('secret',t('seSection'),open);
+  if(s.invalid){
+    rows.append(el('div',{class:'badge bad'},t('seInvalid')+' · '+s.invalid));
+    return box;
+  }
+  const reload=async()=>box.replaceWith(await secretSection(name,box.open));
+  rows.append(el('div',{class:'badge warn'},t('seWarn')));
+  const fields=(s.keys||[]).map(k=>{
+    const label=k.label||k.key;
+    const input=el('input',{type:'password',autocomplete:'new-password',spellcheck:'false','aria-label':label,
+      placeholder:t(k.set?'seSet':'seEmpty')});
+    const remove=k.set?armable(el('button',null,t('seRemove')),()=>
+      secretSend(path+'/'+encodeURIComponent(k.key),'DELETE').then(reload).catch(toastErr)):null;
+    rows.append(actionRow(label,[k.help,t('seHosts')+' '+k.hosts.join(', ')].filter(Boolean).join(' · '),[input,remove]));
+    return[k.key,input];
+  });
+  const save=el('button',{class:'pri'},t('save'));
+  save.addEventListener('click',async()=>{
+    const filled=fields.filter(([,input])=>input.value);
+    if(!filled.length)return;
+    try{
+      await secretSend(path,'PUT',Object.fromEntries(filled.map(([key,input])=>[key,input.value])));
+      toast(t('saved'));
+      await reload();
+    }catch(e){toastErr(e);}
+  });
+  rows.append(el('div',{class:'cfgbar'},el('span',{class:'grow'}),save));
+  return box;
+}
+const SCRIPT_SECTIONS=[
+  {cap:'oauth',apps:'oauthApps',list:'/api/v1/oauth',names:d=>(d.apps||[]).map(a=>a.name),cls:'oauth',make:oauthSection,first:true},
+  {cap:'secret',apps:'secretApps',list:'/api/v1/secrets',names:d=>d.apps||[],cls:'secret',make:secretSection}];
+const hasScriptSection=name=>SCRIPT_SECTIONS.some(s=>S[s.apps]?.has(name));
+async function loadScriptSection(s){
+  if(!S[s.cap]||s.loading)return;
+  s.loading=true;
+  try{
+    const names=s.names((await api(s.list)).data).sort();
+    if(names.join('\n')!==[...(S[s.apps]||[])].sort().join('\n')){
+      S[s.apps]=new Set(names);
+      if(location.hash.startsWith('#/apps'))render();
+    }
+  }catch(e){}
+  s.loading=false;
+}
+function loadScriptSections(){SCRIPT_SECTIONS.forEach(loadScriptSection);}
 const fillScriptConfig=fillConfigPanel;
 fillConfigPanel=async(name,box,saveError,builtin)=>{
-  const open=box.querySelector('.cfgsection.oauth')?.open;
+  const open=new Map(SCRIPT_SECTIONS.map(s=>[s.cls,box.querySelector('.cfgsection.'+s.cls)?.open]));
   const ok=await fillScriptConfig(name,box,saveError,builtin);
-  if(!ok||builtin||!S.oauthApps||!S.oauthApps.has(name))return ok;
-  try{
-    const section=await oauthSection(name,open);
-    [...box.children].find(n=>n.textContent===t('cfgNone'))?.remove();
-    box.prepend(section);
-  }catch(e){box.append(el('div',{class:'badge bad'},e.message));}
+  if(!ok||builtin)return ok;
+  for(const s of SCRIPT_SECTIONS){
+    if(!S[s.apps]?.has(name))continue;
+    try{
+      const section=await s.make(name,open.get(s.cls));
+      [...box.children].find(n=>n.textContent===t('cfgNone'))?.remove();
+      if(s.first)box.prepend(section);else box.append(section);
+    }catch(e){box.append(el('div',{class:'badge bad'},e.message));}
+  }
   return ok;
 };
 // Back from the provider through the Hub: #oauth=<code>&state=<state>, or #oauth_error=<reason>.
@@ -4484,7 +4664,7 @@ async function oauthReturn(){
   if(q.has('oauth_error')){toast(t('oaerror')+' · '+q.get('oauth_error'),false);return;}
   try{
     const path=encodeURIComponent(app);
-    await oauthSend(path+'/code',{code:q.get('oauth')||'',state});
+    await oauthSend(path+'/code','POST',{code:q.get('oauth')||'',state});
     for(let i=0;i<30;i++){
       const{data}=await api(OAUTH+path);
       if(data.state==='signedIn'){toast(t('oaDone'));render();return;}
@@ -4682,7 +4862,7 @@ function maintenanceSection(page){
   ]);
 }
 const BK_CATS=[['wifi','bkWifi'],['settings','bkSettings'],['icons','bkIcons'],
-  ['melodies','bkMelodies'],['palettes','bkPalettes'],['mp3','bkMp3'],
+  ['melodies','bkMelodies'],['palettes','bkPalettes'],['mp3','bkMp3'],['radio','bkRadio'],
   ['scripts','bkScripts'],['apporder','bkApporder']];
 function backupSection(page){
   page.section('backup',t('bkSection'),t('bkSectionH'),[...backupRows(),...restoreRows(t('bkRestoreH'))]);
@@ -4690,7 +4870,7 @@ function backupSection(page){
 function backupRows(){
   const checks={};
   const avail=BK_CATS.filter(([id])=>
-    (id!=='melodies'||hasSink('rtttl'))&&(id!=='mp3'||hasSink('mp3')));
+    (id!=='melodies'||hasSink('rtttl'))&&(id!=='mp3'||hasSink('mp3'))&&(id!=='radio'||hasSink('radio')));
   const all=el('input',{type:'checkbox',checked:true});
   const dl=el('button',{class:'pri'},t('bkDownload'));
   const syncAll=()=>{const n=avail.filter(([id])=>checks[id].checked).length;
@@ -6309,6 +6489,40 @@ function viewFullscreen(){
   addEventListener('resize',()=>fit());
   pollScreen((px,d)=>{pw=d.width;ph=d.height;paint(ctx,px,pw,ph,fit());},250);
 }
+//linux:begin
+const activationConsent=async()=>(await api('/api/v1/activation')).data?.consent;
+function activationDialog(answered){
+  const d=el('dialog',{class:'card',style:'margin:auto;max-width:min(440px,calc(100vw - 32px));color:var(--fg);box-shadow:0 0 0 100vmax #000a','aria-labelledby':'actitle'});
+  const answer=async yes=>{
+    try{await api('/api/v1/activation',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({consent:yes})});d.close();d.remove();answered?.(yes);}
+    catch(e){toastErr(e);}
+  };
+  const link=(href,key)=>el('a',{class:'ghelp',href,target:'_blank',rel:'noopener'},t(key));
+  d.addEventListener('cancel',e=>e.preventDefault());
+  d.append(el('h2',{id:'actitle',tabindex:'-1',autofocus:''},t('acTitle')),el('p',null,t('acWhy')),el('p',null,t('acWhat')),
+    el('div',{style:'display:grid;grid-template-columns:1fr 1fr;gap:8px'},
+      el('button',{onclick:()=>answer(true)},t('acYes')),
+      el('button',{onclick:()=>answer(false)},t('acNo'))),
+    el('p',{class:'ghelp'},
+      link('https://blueforcer.github.io/awtrix-ng/tc002/getting-started/tc002/#activation','acMore'),' · ',
+      link('https://awtrix.de/privacy#tc002-activation','acPrivacy')));
+  document.body.append(d);
+  d.showModal();
+}
+async function askActivation(){
+  try{if(await activationConsent()!==null)return;}catch(e){return;}
+  activationDialog();
+}
+async function activationSection(page){
+  try{if(await activationConsent()!==false)return;}catch(e){return;}
+  const state=el('div',{class:'badge'},t('acOff'));
+  const count=el('button',{onclick:()=>activationDialog(yes=>{
+    if(!yes)return;
+    state.className='badge good';state.replaceChildren(t('acDone'));count.remove();
+  })},t('acCount'));
+  page.section('activation',t('acTitle'),'',[actionRow(t('acState'),t('acOffH'),[state,count])]);
+}
+//linux:end
 if(/\/fullscreen\/?$/.test(location.pathname)){
   viewFullscreen();
 }else{
@@ -6328,6 +6542,7 @@ new ResizeObserver(setChromeH).observe(topbar);
     await ensureCaps();
     //linux:begin
     if(S.oauth&&/^#oauth(_error)?=/.test(location.hash))oauthReturn();
+    if(S.activation&&!S.ap)askActivation();
     //linux:end
     nav();
   }catch(e){}

@@ -133,7 +133,9 @@ function systemPage(view,data){
   //linux:begin
   if(S.gamepad)gamepadSection(page);
   if(S.voice)voiceSection(page);
+  if(S.aud?.speech)speechVoiceSection(page);
   if(S.iphone)iphoneSection(page);
+  if(S.activation&&!S.ap)activationSection(page);
   if(S.mqttTls&&sysFields.mqttTls){
     const tl=sysFields.mqttTls,mp=sysFields.mqttPort;
     if(tl&&mp)tl.row.querySelector('input').addEventListener('change',()=>{

@@ -61,8 +61,15 @@ int main() {
   power.batteryPercent = 76;
   power.batteryMillivolts = 4120;
   check(decodeSupervisorMessage(encodePower(power), message), "power decodes");
-  check(message.type == MessageType::Power && message.power.usbPower &&
+  check(message.type == MessageType::Power && message.power.usbPower && message.power.usbKnown &&
         message.power.batteryPercent == 76 && message.power.batteryMillivolts == 4120, "power round trip");
+  power.usbKnown = false;
+  check(decodeSupervisorMessage(encodePower(power), message) && !message.power.usbKnown, "unknown USB supply round trip");
+  check(decodeSupervisorMessage("{\"v\":2,\"type\":\"power\",\"usbPower\":false,\"batteryPercent\":5,"
+                                "\"batteryMillivolts\":1}", message) && message.power.usbKnown,
+        "a report without usbKnown states the supply");
+  check(!decodeSupervisorMessage("{\"v\":2,\"type\":\"power\",\"usbPower\":true,\"usbKnown\":1,\"batteryPercent\":5,"
+                                 "\"batteryMillivolts\":1}", message), "non-bool usbKnown refused");
 
   NetworkStatus network;
   network.link = WifiLink::Connected;
@@ -150,6 +157,8 @@ int main() {
   check(decodeSupervisorMessage(encodeFactoryReset(), message) && message.type == MessageType::FactoryReset,
         "factory reset");
   check(encodeFactoryReset() == "{\"v\":2,\"type\":\"factoryReset\"}", "factory reset wire form");
+  check(decodeSupervisorMessage(encodeSetupAccessPoint(), message) && message.type == MessageType::SetupAccessPoint &&
+            encodeSetupAccessPoint() == "{\"v\":2,\"type\":\"setupAccessPoint\"}", "setup access point");
   check(decodeSupervisorMessage(encodeWifiScan(), message) && message.type == MessageType::WifiScan, "wifi scan");
   check(encodeWifiScan() == "{\"v\":2,\"type\":\"wifiScan\"}", "wifi scan wire form");
 
@@ -174,8 +183,9 @@ int main() {
   full = encodeWifiScanResult(escaped);
   check(!full.empty() && full.size() <= kMaxSupervisorMessage && decodeSupervisorMessage(full, message) &&
         !message.networks.empty() && message.networks.size() < 32, "escaped SSIDs are trimmed to one datagram");
-  check(decodeSupervisorMessage(encodeWifiScanResult({{std::string(33, 'x'), -40, true}, {"ok", -250, true},
-                                                      {"Valid", -40, false}}), message) &&
+  // Named rather than a braced temporary: GCC 15 flags the temporary with -Wdangling-pointer.
+  const std::vector<WifiNetwork> mixed{{std::string(33, 'x'), -40, true}, {"ok", -250, true}, {"Valid", -40, false}};
+  check(decodeSupervisorMessage(encodeWifiScanResult(mixed), message) &&
         message.networks.size() == 1 && message.networks[0].ssid == "Valid", "encoder drops invalid networks");
 
   const auto scan = [](const std::string& networksJson) {
@@ -253,6 +263,21 @@ int main() {
     message.streamEvent.hostAtMs == 123456, "stream PCM and monotonic timestamp round trip");
   stream.samples.push_back(1);
   check(encodeStreamEvent(stream).empty(), "oversized or partial DMA block rejected");
+  stream.samples.pop_back();
+  constexpr uint32_t kHalves = (uint64_t{1} << 32) / 24 + 1;
+  stream.firstSample = kHalves * 24;
+  check(stream.firstSample % 24 != 0, "the position past the wrap is off the 24 sample grid");
+  check(decodeSupervisorMessage(encodeStreamEvent(stream), message) &&
+        message.type == MessageType::MicrophoneStreamEvent && message.streamEvent.firstSample == stream.firstSample &&
+        message.streamEvent.samples == stream.samples, "audio survives the sample position's wrap");
+  StreamEvent ending;
+  ending.epoch = 42;
+  ending.kind = StreamEvent::Kind::Ended;
+  ending.firstSample = stream.firstSample;
+  ending.error = "stopped";
+  check(decodeSupervisorMessage(encodeStreamEvent(ending), message) &&
+        message.streamEvent.kind == StreamEvent::Kind::Ended && message.streamEvent.firstSample == ending.firstSample &&
+        message.streamEvent.error == "stopped", "the end of a stream survives the wrap");
   check(!decodeSupervisorMessage("{\"v\":2,\"type\":\"microphoneStreamControl\",\"epoch\":0,\"operation\":1}", message),
         "zero stream epoch refused");
   if (failures) return 1;

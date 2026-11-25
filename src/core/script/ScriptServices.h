@@ -13,7 +13,6 @@
 #include "core/render/FontCatalog.h"
 #include "core/script/BerryVM.h"
 #include "core/script/HttpHeaders.h"
-#include "core/script/ScriptHeap.h"
 #include "core/script/ScriptApplication.h"
 
 namespace awtrix {
@@ -31,16 +30,6 @@ class ScriptExtensionLifecycle;
 // How much of a response is kept when a script does not ask for a specific maxBytes itself.
 constexpr std::size_t kMaxHttpBody = 8 * 1024;
 constexpr std::size_t kMaxPendingHttp = 8;
-
-// How much of a response may actually be collected. A script names the figure it wants, but the
-// bytes land chunk by chunk on the fetching task's heap, and an append that cannot allocate takes
-// the firmware down with it. Measured when the filter is armed, so a script that asks for little
-// pays for little and nothing is set aside in advance.
-inline std::size_t httpBodyCap(std::size_t wanted) {
-  const std::size_t room = heap::growthBudget();
-  return wanted < room ? wanted : room;
-}
-
 
 // Free heap an install needs beyond the source itself. Replacing costs less because the old
 // copy's memory comes back during the swap.
@@ -82,6 +71,12 @@ static_assert(kTlsBootGraceMs < kHttpTimeoutMs,
               "a held fetch must still fit the answer window");
 static_assert(kMaxTightRetries * kTightRetryDelayMs < kHttpTimeoutMs,
               "retries must give up before the request expires");
+
+inline int64_t httpBudgetMs(uint32_t timeoutSec, int64_t waitedMs) {
+  if (waitedMs >= kHttpTimeoutMs) return 0;
+  return timeoutSec ? int64_t{timeoutSec} * 1000 : kHttpTimeoutMs - waitedMs;
+}
+
 #define AWTRIX_MAX_MQTT_SUBS 8
 constexpr std::size_t kMaxMqttSubs = AWTRIX_MAX_MQTT_SUBS;
 
@@ -94,6 +89,7 @@ struct HttpRequest {
   std::size_t maxBytes = 0;
   std::string find;
   std::size_t keep = 0;
+  uint32_t timeoutSec = 0;
 };
 
 struct HttpResult {
@@ -107,6 +103,7 @@ class IScriptHttp {
  public:
   virtual ~IScriptHttp() = default;
   virtual bool request(const HttpRequest& req) = 0;
+  virtual void cancel(uint32_t) {}
 };
 
 class IScriptMqtt {
@@ -165,8 +162,9 @@ struct ScriptServices {
   std::function<std::size_t()> maxAllocHeap;
   std::function<void(const std::string&)> logDebug;
   IScriptApplication* application = nullptr;
-  // The analysed frame audible at nowMs; asking is what switches the analysis on.
-  std::function<bool(int64_t nowMs, audio::FrameStats& out)> audioStats;
+  // The analysed frame audible at nowMs; asking is what switches the analysis on. onScreen: asked
+  // from draw(), so the app is on the panel; only then may a microphone start listening.
+  std::function<bool(int64_t nowMs, bool onScreen, audio::FrameStats& out)> audioStats;
   std::function<bool(const std::string& name, std::string& out)> readSource;
   std::function<bool(const std::string& name, std::string& out)> readStore;
 };

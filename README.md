@@ -31,9 +31,11 @@ written for one clock works on the others.
 
 It also runs on Pimoroni's [Galactic Unicorn](docs/advanced/galactic-unicorn.md), a fixed 53×11
 display, with a Pico W (RP2040) or a Pico 2 W (RP2350). Its images install over USB as UF2 files,
-and its optional features follow the board's capabilities. Both images were checked on the board
-with 1.2.2; a Pico W running the 1.2.1-based port (PR 1) was upgraded over USB and kept its
-settings, Wi-Fi and scripts. See the guide, and the blog post
+and its optional features follow the board's capabilities. The Pico 2 W Unicorn was upgraded in
+place from 1.2.2 to 1.2.3 and kept its settings, scripts and apps. MQTT and Home Assistant were
+checked on that Pico 2 W: it dropped an oversized MQTT notification without disconnecting.
+The 1.2.3 Pico W image was checked for boot on a bare Pico W without a display. See the guide's
+[verification scope](docs/advanced/galactic-unicorn.md#verification-scope) and the blog post
 [AWTRIX on a Pico](https://www.flaviof.com/blog2/post/hacks/awtrix-picow/) for the story of the
 port and more details about the Unicorn.
 
@@ -102,12 +104,11 @@ and animations in the browser, and anything you make can be shared back.
 ## The AWTRIX NG app
 
 The **[AWTRIX NG app](https://blueforcer.github.io/awtrix-ng/guides/app/)** for
-iPhone and
+[iPhone](https://apps.apple.com/app/id6819090967) and
 [Android](https://play.google.com/store/apps/details?id=de.awtrix.ng) finds the clocks in your
 Wi-Fi, shows them live and brings the Hub to your phone. It sends Android notifications and your
 photos to the clock, and on the TC002 your phone becomes a gamepad. It is a one-time purchase with
 no subscription, no ads and no account, and every purchase supports the development of AWTRIX NG.
-The iPhone app is in review at Apple and waits for its release.
 
 ## Get started
 

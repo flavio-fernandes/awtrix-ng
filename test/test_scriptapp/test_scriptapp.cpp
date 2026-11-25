@@ -1,10 +1,12 @@
 ﻿#include <unity.h>
 
 #include <string>
+#include <vector>
 
 #include "berry.h"
 #include "core/apps/IApp.h"
 #include "core/render/Canvas.h"
+#include "core/render/ContentBand.h"
 #include "core/render/TextRenderer.h"
 #include "core/script/BerryVM.h"
 #include "core/script/ScriptApp.h"
@@ -1483,6 +1485,69 @@ static void test_compile_error_latches_at_construction() {
   TEST_ASSERT_TRUE(app.error().message.find("script:") == std::string::npos);
 }
 
+// A runtime error names the line it happened on: inside a helper method, that is the helper's
+// line, not the line in draw() that called it.
+static void test_a_runtime_error_names_its_line() {
+  Engine e;
+  script::ScriptApp app(e.vm, "Idx",
+                        "class Idx\n"
+                        "  var items\n"
+                        "  def init() self.items = [1, 2] end\n"
+                        "  def pick(i)\n"
+                        "    return self.items[i]\n"
+                        "  end\n"
+                        "  def draw()\n"
+                        "    self.pick(5)\n"
+                        "  end\n"
+                        "end\n"
+                        "return Idx()",
+                        script::ScriptMeta{}, "", nullptr);
+  Canvas c(32, 8);
+  RenderCtx ctx;
+  ctx.font = &kFont;
+  app.render(c, ctx);
+  TEST_ASSERT_FALSE(app.ok());
+  TEST_ASSERT_EQUAL_INT(5, app.error().line);
+  TEST_ASSERT_EQUAL_STRING("index_error: list index out of range", app.error().message.c_str());
+  TEST_ASSERT_EQUAL_STRING("draw", app.error().hook.c_str());
+}
+
+static void test_a_raise_names_its_line() {
+  Engine e;
+  script::ScriptApp app(e.vm, "R",
+                        "class R\n"
+                        "  def setup()\n"
+                        "    raise \"value_error\", \"no city set\"\n"
+                        "  end\n"
+                        "  def draw() end\n"
+                        "end\n"
+                        "return R()",
+                        script::ScriptMeta{}, "", nullptr);
+  TEST_ASSERT_FALSE(app.ok());
+  TEST_ASSERT_EQUAL_INT(3, app.error().line);
+  TEST_ASSERT_EQUAL_STRING("value_error: no city set", app.error().message.c_str());
+  TEST_ASSERT_EQUAL_STRING("setup", app.error().hook.c_str());
+}
+
+// Berry looks past the newline after a string literal for one that follows it. The code of that
+// line still belongs to it, not to the next one.
+static void test_a_string_at_the_end_of_a_line_keeps_its_line() {
+  Engine e;
+  script::ScriptApp app(e.vm, "S",
+                        "class S\n"
+                        "  def setup()\n"
+                        "    var n = nil\n"
+                        "    var s = n + \" items\"\n"
+                        "    var t = 1\n"
+                        "  end\n"
+                        "  def draw() end\n"
+                        "end\n"
+                        "return S()",
+                        script::ScriptMeta{}, "", nullptr);
+  TEST_ASSERT_FALSE(app.ok());
+  TEST_ASSERT_EQUAL_INT(4, app.error().line);
+}
+
 static void test_setup_failure_latches() {
   Engine e;
   script::ScriptApp app(e.vm, "S",
@@ -1546,6 +1611,82 @@ static void test_error_latches_and_renders_err_frame() {
   TEST_ASSERT_FALSE(app.ok());
   TEST_ASSERT_EQUAL_STRING(before.c_str(), app.error().message.c_str());
   TEST_ASSERT_EQUAL_STRING(beforeHook.c_str(), app.error().hook.c_str());
+}
+
+// ERR:<name> that is wider than the panel scrolls, and the rotation waits for one pass. A
+// name that fits stands still and holds nothing.
+static void test_a_long_err_frame_scrolls_through_once() {
+  Engine e;
+  script::ScriptApp longApp(e.vm, "AVERYLONGBROKENAPPNAME", "class L def setup() end end\nreturn L()",
+                            script::ScriptMeta{}, "", nullptr);
+  TEST_ASSERT_FALSE(longApp.ok());
+  Canvas c(32, 8);
+  RenderCtx ctx;
+  ctx.font = &kFont;
+  ctx.nowMs = 1000;
+  longApp.notifyVisible(true, &ctx);
+  longApp.render(c, ctx);
+  TEST_ASSERT_TRUE(longApp.scrollHolds());
+  std::vector<uint32_t> first;
+  for (int y = 0; y < 8; ++y)
+    for (int x = 0; x < 32; ++x) first.push_back(c.getPixel(x, y));
+
+  bool moved = false;
+  for (int64_t t = 1000; t < 5000 && !moved; t += 30) {
+    ctx.nowMs = t;
+    longApp.render(c, ctx);
+    for (int y = 0; y < 8; ++y)
+      for (int x = 0; x < 32; ++x) moved = moved || c.getPixel(x, y) != first[y * 32 + x];
+  }
+  TEST_ASSERT_TRUE(moved);
+
+  for (int64_t t = 2000; t < 120000 && longApp.scrollHolds(); t += 25) {
+    ctx.nowMs = t;
+    longApp.render(c, ctx);
+  }
+  TEST_ASSERT_FALSE(longApp.scrollHolds());
+
+  script::ScriptApp shortApp(e.vm, "BAD", "class B def setup() end end\nreturn B()",
+                             script::ScriptMeta{}, "", nullptr);
+  shortApp.notifyVisible(true, &ctx);
+  shortApp.render(c, ctx);
+  TEST_ASSERT_FALSE(shortApp.scrollHolds());
+}
+
+// On a panel taller than eight rows the ERR frame is drawn in the content band, so it lines up
+// with the clock and every other line of text: the 8-row frame, moved down by the band's top.
+static void test_err_frame_sits_in_the_content_band_of_a_tall_panel() {
+  Engine e;
+  script::ScriptApp app(e.vm, "BAD", "class B def setup() end end\nreturn B()", script::ScriptMeta{}, "",
+                        nullptr);
+  TEST_ASSERT_FALSE(app.ok());
+  RenderCtx ctx;
+  ctx.font = &kFont;
+  app.notifyVisible(true, &ctx);
+  Canvas band(32, 8);
+  app.render(band, ctx);
+  for (int h : {11, 16}) {
+    Canvas tall(32, h);
+    tall.clear(0x00FF00u);
+    app.render(tall, ctx);
+    const int top = render::contentBandTop(h);
+    TEST_ASSERT_TRUE(top > 0);
+    int lit = 0;
+    for (int y = 0; y < h; ++y)
+      for (int x = 0; x < 32; ++x) {
+        const bool inBand = y >= top && y < top + 8;
+        const uint32_t want = inBand ? band.getPixel(x, y - top) : 0u;
+        TEST_ASSERT_EQUAL_HEX32(want, tall.getPixel(x, y));
+        if (want == 0xFF0000u) ++lit;
+      }
+    TEST_ASSERT_TRUE(lit > 0);
+  }
+  // A platform that enlarges pages itself (contentBand false) keeps the whole panel.
+  ctx.contentBand = false;
+  Canvas tall(32, 11);
+  app.render(tall, ctx);
+  for (int y = 0; y < 8; ++y)
+    for (int x = 0; x < 32; ++x) TEST_ASSERT_EQUAL_HEX32(band.getPixel(x, y), tall.getPixel(x, y));
 }
 
 static void test_instruction_limit_latches() {
@@ -1792,8 +1933,13 @@ int main(int, char**) {
   RUN_TEST(test_draw_not_required_when_headless);
   RUN_TEST(test_missing_return_latches);
   RUN_TEST(test_compile_error_latches_at_construction);
+  RUN_TEST(test_a_runtime_error_names_its_line);
+  RUN_TEST(test_a_raise_names_its_line);
+  RUN_TEST(test_a_string_at_the_end_of_a_line_keeps_its_line);
   RUN_TEST(test_setup_failure_latches);
   RUN_TEST(test_error_latches_and_renders_err_frame);
+  RUN_TEST(test_a_long_err_frame_scrolls_through_once);
+  RUN_TEST(test_err_frame_sits_in_the_content_band_of_a_tall_panel);
   RUN_TEST(test_instruction_limit_latches);
   RUN_TEST(test_store_seed_loaded);
   RUN_TEST(test_store_seed_visible_in_setup);

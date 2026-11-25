@@ -19,6 +19,8 @@ class Gamepad {
   struct Known {
     Address address;
     std::string name;
+    // Xbox controllers need an encrypted link before discovery and their own link settings.
+    bool xbox = false;
   };
   static constexpr int64_t kPairingMs = 60000;
   // Each failure in a row doubles the wait before the next try, up to kRetryMaxMs.
@@ -56,7 +58,7 @@ class Gamepad {
   void stopAll();
   void searchNew();
   void watch();
-  void link(const Address& address, const std::string& name);
+  void link(const Known& device);
   void lost(const std::string& why);
   void subscribe();
   void ready();
@@ -78,7 +80,9 @@ class Gamepad {
   int64_t retryAt_ = -1;
   int failures_ = 0;
   uint32_t lastId_ = 0;
-  uint32_t scanId_ = 0, connId_ = 0, readId_ = 0, subId_ = 0;
+  uint32_t scanId_ = 0, connId_ = 0, pairId_ = 0, readId_ = 0, subId_ = 0;
+  unsigned ignoredReports_ = 0;
+  const char* phase_ = "idle";
   Known linking_;
   HidLayout layout_;
   GamepadStatus status_ = GamepadStatus::Unpaired;

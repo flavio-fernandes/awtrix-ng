@@ -2,7 +2,9 @@
 #include <fcntl.h>
 #include <sys/ptrace.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <climits>
@@ -15,6 +17,7 @@
 
 #include "platform/tc002/daemon/RuntimeChild.h"
 #include "platform/tc002/daemon/ForwardedLog.h"
+#include "platform/tc002/daemon/Process.h"
 #include "../../ManualClock.h"
 #include "support.h"
 
@@ -32,6 +35,12 @@ namespace {
 
 std::string fakeBinary;
 std::string fakeAudio;
+
+// A ceiling only decides when a failing check gives up, and under load a fresh runtime takes seconds.
+constexpr int kLoadFactor = 10;
+constexpr int kServiceStopMs = 30000;
+
+bool signalChild(pid_t pid, int signal) { return pid > 0 && ::kill(pid, signal) == 0; }
 
 class FakeHardware : public ChildHardware {
  public:
@@ -71,6 +80,7 @@ class FakeControls : public WifiControl, public TimeControl, public HostnameCont
     return true;
   }
   void eraseCredentials() override { calls.push_back("erase"); }
+  void openSetupAccessPoint() override { calls.push_back("setup access point"); }
   void scan(ScanDone done) override {
     calls.push_back("scan");
     pendingScan = std::move(done);
@@ -129,9 +139,13 @@ struct Rig {
     options.home = data;
     options.bootAttemptsPaths = {dir / "data/state/boot-attempts", dir / "tmp/awtrix-loader.attempts"};
     options.httpPort = 8080;
-    options.readyTimeoutMs = 1500;
+    // Beyond anything load can delay, so they only run out when a test calls advance(). The stop
+    // grace stays below kServiceStopMs: advancing past that ends the loop before its SIGKILL.
+    options.readyTimeoutMs = 60000;
+    options.stopGraceMs = 20000;
+    options.rebootExitGraceMs = 20000;
+    options.helperExitGraceMs = 20000;
     options.healthyMs = 700;
-    options.stopGraceMs = 400;
     options.prepareRetryMs = 20;
     options.backoffMs = {100, 200, 400, 800, 1600};
     if (tweak) tweak(options);
@@ -157,7 +171,7 @@ struct Rig {
       loop.requestStop("reboot requested by the runtime");
     };
     runtime = std::make_unique<RuntimeChild>(state, hardware, options, links);
-    loop.add(*runtime, 3000);
+    loop.add(*runtime, kServiceStopMs);
     loop.start();
   }
   ~Rig() {
@@ -173,7 +187,13 @@ struct Rig {
     writeFile(data + "/outbox.tmp", lines);
     ::rename((data + "/outbox.tmp").c_str(), (data + "/outbox").c_str());
   }
-  bool until(const std::function<bool()>& done, int timeoutMs) { return runUntil(loop, done, timeoutMs); }
+  bool until(const std::function<bool()>& done, int timeoutMs) {
+    return runUntil(loop, done, timeoutMs * kLoadFactor);
+  }
+  // Keeps the loop running for a check that something does not happen.
+  void settle(int milliseconds) {
+    runUntil(loop, [] { return false; }, milliseconds);
+  }
   void advance(int64_t milliseconds) {
     awtrix_test::advanceClock(milliseconds);
     loop.runOnce(0);
@@ -182,9 +202,12 @@ struct Rig {
   std::string audio(pid_t pid) { return readFile(data + "/audio-" + std::to_string(pid)); }
   std::string intro(pid_t pid) { return readFile(data + "/intro-" + std::to_string(pid)); }
   std::string voice(pid_t pid) { return readFile(data + "/voice-" + std::to_string(pid)); }
+  std::string wake(pid_t pid) { return readFile(data + "/wake-" + std::to_string(pid)); }
+  std::string vad(pid_t pid) { return readFile(data + "/vad-" + std::to_string(pid)); }
   // The start reason and the --uid of every runtime so far, oldest first.
   std::vector<std::string> starts() { return lines("starts"); }
   std::vector<std::string> uids() { return lines("uids"); }
+  std::vector<std::string> activations() { return lines("activations"); }
   std::vector<std::string> lines(const std::string& name) {
     std::vector<std::string> lines;
     const std::string text = readFile(data + "/" + name);
@@ -205,7 +228,7 @@ struct Rig {
 };
 
 bool exitedUnreaped(pid_t pid, int timeoutMs) {
-  const int64_t deadline = posix::monotonicMs() + timeoutMs;
+  const int64_t deadline = posix::monotonicMs() + timeoutMs * kLoadFactor;
   for (;;) {
     siginfo_t info{};
     if (::waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOHANG | WNOWAIT) == 0 && info.si_pid == pid)
@@ -260,7 +283,7 @@ bool finishesWithin(Tracer& tracer, int rescueMs, const std::function<void()>& b
     while (!done && posix::monotonicMs() < deadline) ::usleep(10000);
     if (!done) {
       rescued = true;
-      ::kill(tracer.pid(), SIGKILL);
+      signalChild(tracer.pid(), SIGKILL);
     }
   });
   body();
@@ -282,11 +305,11 @@ void unreapableChildren() {
     rig.loop.requestStop("test");
     rig.loop.runOnce(0);
     rig.advance(rig.options.stopGraceMs);
-    rig.advance(3000);
+    rig.advance(kServiceStopMs);
     check(rig.until([&] { return rig.loop.finished(); }, 5000) && rig.rt().pid() == pid,
           "the stop sequence gives up on a runtime that cannot be reaped");
     const int64_t begin = posix::monotonicMs();
-    check(finishesWithin(tracer, 3000, [&] { rig.runtime.reset(); }) && posix::monotonicMs() - begin < 500,
+    check(finishesWithin(tracer, 3000, [&] { rig.runtime.reset(); }) && posix::monotonicMs() - begin < kReapGraceMs,
           "the destructor leaves an unreapable runtime that was already sent SIGKILL to init");
     tracer.release();
     ::waitpid(pid, nullptr, 0);
@@ -299,7 +322,7 @@ void unreapableChildren() {
     check(tracer.attached(), "tracer holds the helper");
     rig.loop.requestStop("test");
     check(rig.until([&] { return rig.rt().pid() < 0; }, 1000), "runtime reaped before helper deadline");
-    rig.advance(3000);
+    rig.advance(kServiceStopMs);
     check(rig.until([&] { return rig.loop.finished(); }, 5000) && rig.rt().helperPid() == helper,
           "the stop sequence gives up on a helper that cannot be reaped");
     const int64_t begin = posix::monotonicMs();
@@ -341,13 +364,18 @@ void bootCounter() {
 }
 
 void requestsBeforeExit() {
-  Rig rig("abrupt", [](RuntimeOptions& options) { options.healthyMs = 60000; });
+  // Without a backoff a restart would fall into the pass of the loop that reads the requests.
+  Rig rig("abrupt", [](RuntimeOptions& options) {
+    options.healthyMs = 60000;
+    options.backoffMs = {0};
+  });
   check(rig.until([&] { return rig.running() && rig.rt().helloReceived(); }, 3000), "abrupt runtime ready");
   const pid_t pid = rig.rt().pid();
   rig.send("{\"v\":2,\"type\":\"factoryReset\"}\n{\"v\":2,\"type\":\"reboot\"}\n");
   check(exitedUnreaped(pid, 3000), "runtime exited right after sending its requests");
   check(rig.until([&] { return rig.loop.finished(); }, 3000) && rig.reboot,
         "a reboot request read together with the runtime's exit is honoured");
+  check(rig.rt().spawns() == 1, "no new runtime starts behind a reboot request read with the exit");
   check(rig.controls.calls == std::vector<std::string>({"erase"}),
         "a factory reset sent just before the exit erases the credentials");
   check(rig.countersCleared(), "the ready runtime's reboot cleared the boot counters");
@@ -355,7 +383,7 @@ void requestsBeforeExit() {
 
 void speakerHelper() {
   {
-    Rig rig("ok", [](RuntimeOptions& options) { options.helperExitGraceMs = 1500; }, true, "slow");
+    Rig rig("ok", {}, true, "slow");
     check(rig.until([&] { return rig.running(); }, 3000), "runtime with speaker helper ready");
     const pid_t first = rig.rt().pid();
     check(rig.report(first) == "valid\n", "launch contract with fd 104: " + rig.report(first));
@@ -394,8 +422,9 @@ void speakerHelper() {
           "a missing helper turns the speaker off, so there is no audio fd: " + rig.report(rig.rt().pid()));
   }
   {
-    Rig rig("ok", [](RuntimeOptions& options) { options.helperExitGraceMs = 200; }, true, "linger");
-    check(rig.until([&] { return rig.running(); }, 3000), "runtime with lingering helper ready");
+    Rig rig("ok", {}, true, "linger");
+    check(rig.until([&] { return rig.running() && rig.audio(rig.rt().pid()) == "helper ok\n"; }, 3000),
+          "runtime with lingering helper ready");
     rig.rt().restart(posix::monotonicMs());
     check(rig.until([&] { return rig.rt().pid() < 0; }, 1000), "runtime exits while its helper lingers");
     rig.advance(rig.options.helperExitGraceMs);
@@ -465,19 +494,38 @@ void bootIntro() {
 }
 
 void speechVoice() {
-  const auto withVoice = [](RuntimeOptions& options) { options.speechVoice = "/release/share/speech/voice.atts"; };
+  const auto withVoice = [](RuntimeOptions& options) {
+    options.speechVoice = "/release/share/speech/voice.atts";
+    options.wakeWord = "/release/share/wake/hey_awtrix.tflite";
+    options.vad = "/release/share/vad/vad.tflite";
+  };
   {
     Rig rig("ok", withVoice, true, "ok");
     check(rig.until([&] { return rig.running(); }, 3000), "runtime with speaker and voice ready");
     const pid_t pid = rig.rt().pid();
-    check(rig.report(pid) == "valid\n" && rig.voice(pid) == "/release/share/speech/voice.atts\n",
-          "the voice comes with the speaker: " + rig.report(pid) + rig.voice(pid));
+    check(rig.report(pid) == "valid\n" && rig.voice(pid) == "/release/share/speech/voice.atts\n" &&
+              rig.wake(pid) == "/release/share/wake/hey_awtrix.tflite\n" &&
+              rig.vad(pid) == "/release/share/vad/vad.tflite\n",
+          "the voice, the wake word and the voice activity model come with the speaker: " + rig.report(pid) +
+              rig.voice(pid) + rig.wake(pid) + rig.vad(pid));
+  }
+  {
+    Rig rig("ok", [](RuntimeOptions& options) { options.wakeWord = "/release/share/wake/hey_awtrix.tflite"; },
+            true, "ok");
+    check(rig.until([&] { return rig.running(); }, 3000), "runtime with speaker but no voice ready");
+    const pid_t pid = rig.rt().pid();
+    check(rig.voice(pid) == "none\n" && rig.wake(pid) == "/release/share/wake/hey_awtrix.tflite\n" &&
+              rig.vad(pid) == "none\n",
+          "a release without a voice still has its wake word: " + rig.voice(pid) + rig.wake(pid) + rig.vad(pid));
   }
   {
     Rig rig("ok", withVoice, true, "missing");
     check(rig.until([&] { return rig.running(); }, 3000), "runtime without speaker ready");
     const pid_t pid = rig.rt().pid();
-    check(rig.report(pid) == "valid\n" && rig.voice(pid) == "none\n", "no speaker, no voice: " + rig.voice(pid));
+    check(rig.report(pid) == "valid\n" && rig.voice(pid) == "none\n" && rig.wake(pid) == "none\n" &&
+              rig.vad(pid) == "none\n",
+          "no speaker, no voice, no wake word, no voice activity model: " + rig.voice(pid) + rig.wake(pid) +
+              rig.vad(pid));
   }
 }
 
@@ -525,12 +573,13 @@ void healthyRun() {
            "{\"v\":2,\"type\":\"hostname\",\"name\":\"clock\"}\n"
            "{\"v\":2,\"type\":\"hostname\",\"name\":\"clock2\"}\n"
            "{\"v\":2,\"type\":\"wifiScan\"}\n"
+           "{\"v\":2,\"type\":\"setupAccessPoint\"}\n"
            "{\"v\":2,\"type\":\"factoryReset\"}\n");
-  check(rig.until([&] { return rig.controls.calls.size() >= 6; }, 2000), "runtime commands dispatched");
-  rig.until([] { return false; }, 100);
+  check(rig.until([&] { return rig.controls.calls.size() >= 7; }, 2000), "runtime commands dispatched");
+  rig.settle(100);
   check(rig.controls.calls == std::vector<std::string>({"wifi Home hunter22", "ntp time.example", "hostname clock",
-                                                        "hostname clock2", "scan", "erase"}),
-        "wifi, ntp, hostname, scan and factory reset dispatched in order; repeated values are idempotent");
+                                                        "hostname clock2", "scan", "setup access point", "erase"}),
+        "runtime commands dispatched in order; repeated values are idempotent");
   check(rig.running() && rig.state.power().batteryPercent == 50, "malformed and wrong-direction messages ignored");
   check(static_cast<bool>(rig.controls.pendingScan), "scan handed to the Wi-Fi service");
   if (rig.controls.pendingScan) rig.controls.pendingScan({{"Cafe", -48, true}, {"Open", -70, false}});
@@ -541,7 +590,7 @@ void healthyRun() {
         }, 2000),
         "scan result delivered to the runtime");
   rig.send("{\"v\":2,\"type\":\"wifiScan\"}\n");
-  check(rig.until([&] { return rig.controls.calls.size() == 7 && rig.controls.calls.back() == "scan"; }, 2000),
+  check(rig.until([&] { return rig.controls.calls.size() == 8 && rig.controls.calls.back() == "scan"; }, 2000),
         "second scan requested");
   const auto staleScan = rig.controls.pendingScan;
 
@@ -560,7 +609,7 @@ void healthyRun() {
   check(rig.until([&] { return rig.rt().helloReceived(); }, 2000), "new runtime said hello");
   const std::size_t results = occurrences(rig.received(), "wifiScanResult");
   if (staleScan) staleScan({{"Late", -60, true}});
-  rig.until([] { return false; }, 200);
+  rig.settle(200);
   check(occurrences(rig.received(), "wifiScanResult") == results, "a scan finishing after a restart is dropped");
 
   const std::string log = readFile(rig.dir / "daemon.log");
@@ -620,13 +669,20 @@ void readinessTimeout() {
   check(rig.until([&] { return rig.report(rig.rt().pid()) == "valid\n"; }, 1000), "silent runtime launched");
   rig.advance(rig.options.readyTimeoutMs);
   check(rig.until([&] { return rig.rt().spawns() >= 2; }, 4000), "runtime without readiness is restarted");
-  check(rig.rt().lastExit() == "exit 0" && rig.rt().consecutiveFailures() >= 1, "missing readiness counts as failure");
+  check(rig.rt().lastExit() == "exit 0" && rig.rt().consecutiveFailures() >= 1,
+        "missing readiness counts as failure: " + rig.rt().lastExit());
 }
 
 void stubbornChild() {
-  Rig rig("stubborn", [](RuntimeOptions& options) { options.readyTimeoutMs = 300; });
+  Rig rig("stubborn");
+  check(rig.until([&] { return rig.report(rig.rt().pid()) == "valid\n"; }, 1000), "stubborn runtime launched");
+  rig.setMode("ok");
+  rig.advance(rig.options.readyTimeoutMs);
+  rig.settle(100);
+  check(rig.rt().pid() > 0 && rig.rt().spawns() == 1, "SIGTERM ignored, the runtime keeps its grace period");
+  rig.advance(rig.options.stopGraceMs);
   check(rig.until([&] { return rig.rt().spawns() >= 2; }, 3000), "restarted after SIGKILL");
-  check(rig.rt().lastExit() == "signal 9", "SIGTERM ignored, SIGKILL after the grace period");
+  check(rig.rt().lastExit() == "signal 9", "SIGKILL after the grace period: " + rig.rt().lastExit());
 }
 
 void startReasons() {
@@ -661,6 +717,20 @@ void startReasons() {
 }
 
 // The device id kept in data/state/uid (stored when not empty), waited for at most waitMs.
+void activationId() {
+  {
+    Rig rig("ok");
+    check(rig.until([&] { return rig.running(); }, 3000), "runtime ready without an activation id");
+    check(rig.activations() == std::vector<std::string>{"none"}, "no --activation-id without one");
+  }
+  {
+    const std::string id(64, 'a');
+    Rig rig("ok", [&](RuntimeOptions& options) { options.activationId = id; });
+    check(rig.until([&] { return rig.running(); }, 3000), "runtime ready with an activation id");
+    check(rig.activations() == std::vector<std::string>{id}, "the runtime gets the activation id");
+  }
+}
+
 std::function<void(RuntimeOptions&)> keptUid(const std::string& stored, int64_t waitMs) {
   return [stored, waitMs](RuntimeOptions& options) {
     options.uidPath = posix::parentDirectory(options.bootAttemptsPaths[0]) + "/uid";
@@ -674,13 +744,13 @@ void deviceId() {
     Rig rig("ok");
     check(rig.until([&] { return rig.running(); }, 3000), "runtime ready without a device id file");
     rig.publishMac("AA:BB:CC:00:11:22");
-    rig.until([] { return false; }, 200);
+    rig.settle(200);
     check(rig.uids() == std::vector<std::string>{"none"} && rig.rt().spawns() == 1,
           "no --uid and no restart without a place to keep the id");
   }
   {
-    Rig rig("ok", keptUid("", 5000));
-    rig.until([] { return false; }, 300);
+    Rig rig("ok", keptUid("", 60000));
+    rig.settle(300);
     check(rig.rt().spawns() == 0, "the first start waits for the Wi-Fi MAC while no id is kept");
     rig.publishMac("AA:BB:CC:00:11:22");
     check(rig.until([&] { return rig.running(); }, 1000), "the MAC ends the wait at once");
@@ -689,21 +759,21 @@ void deviceId() {
           "the runtime gets the MAC's id, and the id is kept");
   }
   {
-    Rig rig("ok", keptUid("aabbcc001122", 5000));
+    Rig rig("ok", keptUid("aabbcc001122", 60000));
     check(rig.until([&] { return rig.running(); }, 1000), "a kept id starts the runtime without waiting");
     rig.publishMac("aa:bb:cc:00:11:22");
-    rig.until([] { return false; }, 200);
+    rig.settle(200);
     check(rig.uids() == std::vector<std::string>{"aabbcc001122"} && rig.rt().spawns() == 1,
           "the same MAC changes nothing");
   }
   {
-    Rig rig("ok", keptUid("0123456789ab", 5000));
+    Rig rig("ok", keptUid("0123456789ab", 60000));
     check(rig.until([&] { return rig.running(); }, 1000), "runtime ready with the kept id");
     rig.publishMac("AA:BB:CC:00:11:22");
     check(rig.until([&] { return rig.rt().spawns() == 2 && rig.running(); }, 3000),
           "a runtime with another id is restarted");
     rig.publishMac("AA:BB:CC:00:11:33");
-    rig.until([] { return false; }, 300);
+    rig.settle(300);
     check(rig.uids() == std::vector<std::string>{"0123456789ab", "aabbcc001122"} &&
               rig.starts().back() == "software" && rig.rt().spawns() == 2 &&
               readFile(rig.options.uidPath) == "aabbcc001133\n",
@@ -718,8 +788,8 @@ void deviceId() {
     check(rig.uids() == std::vector<std::string>{"none", "aabbcc001122"}, "without an id first, then with it");
   }
   {
-    Rig rig("ok", keptUid("not-an-id", 300));
-    rig.until([] { return false; }, 150);
+    Rig rig("ok", keptUid("not-an-id", 60000));
+    rig.settle(150);
     check(rig.rt().spawns() == 0, "a malformed kept id counts as none");
   }
 }
@@ -756,7 +826,7 @@ void exitLinesReachTheNextRuntime() {
                                has("pid " + std::to_string(first) + " ended"); }, 2000),
         "the next runtime hears why and how the one before ended");
   const pid_t second = rig.rt().pid();
-  ::kill(second, SIGKILL);
+  signalChild(second, SIGKILL);
   check(rig.until([&] { return rig.rt().spawns() == 3 && rig.running(); }, 3000), "started again after a crash");
   check(rig.until([&] { return has("pid " + std::to_string(second) + " ended"); }, 2000),
         "the next runtime hears about the crash");
@@ -800,13 +870,13 @@ void bluetoothLifecycle() {
     check(rig.until([&] { return rig.running() && rig.received().find(first) != std::string::npos; }, 3000),
           "Bluetooth state published before hello reaches the runtime");
     const pid_t pid = rig.rt().pid();
-    check(::kill(pid, SIGSTOP) == 0, "pause runtime consumption");
+    check(signalChild(pid, SIGSTOP), "pause runtime consumption");
     int status = 0;
     check(::waitpid(pid, &status, WUNTRACED) == pid && WIFSTOPPED(status), "runtime stopped reading");
     for (int i = 0; i < 2000; ++i) rig.state.setPower({});
     rig.rt().bluetoothStatus({false, "superseded"});
     rig.rt().bluetoothStatus({true, ""});
-    check(::kill(pid, SIGCONT) == 0, "resume runtime consumption");
+    check(signalChild(pid, SIGCONT), "resume runtime consumption");
     const std::string latest = awtrix::tc002::encodeBluetooth({true, ""});
     check(rig.until([&] { return rig.received().find(latest) != std::string::npos; }, 3000),
           "resync delivers the latest Bluetooth state after backpressure");
@@ -822,7 +892,7 @@ void microphoneLifecycle() {
     rig.send(encodeMicrophonePcmRequest(7) + "\n");
     check(rig.until([&] { return !!rig.pendingPcm; }, 3000), "PCM: capture requested");
     const pid_t pid = rig.rt().pid();
-    check(::kill(pid, SIGSTOP) == 0, "PCM: pause runtime consumption");
+    check(signalChild(pid, SIGSTOP), "PCM: pause runtime consumption");
     int status = 0;
     check(::waitpid(pid, &status, WUNTRACED) == pid && WIFSTOPPED(status), "PCM: runtime stopped reading");
     for (int i = 0; i < 2000; ++i) rig.state.setPower({});
@@ -830,10 +900,10 @@ void microphoneLifecycle() {
     const auto expected = encodeMicrophonePcm(pcm);
     auto complete = std::move(rig.pendingPcm);
     complete(pcm);
-    check(::kill(pid, SIGCONT) == 0, "PCM: resume runtime consumption");
+    check(signalChild(pid, SIGCONT), "PCM: resume runtime consumption");
     check(rig.until([&] { return rig.received().find(expected) != std::string::npos; }, 3000),
           "PCM: nonreplaceable completion survives supervisor backpressure");
-    rig.until([] { return false; }, 120);
+    rig.settle(120);
     check(occurrences(rig.received(), expected) == 1 && rig.pcmRequests == std::vector<int>{7},
           "PCM: completion delivered once without repeating the capture");
   }
@@ -843,14 +913,14 @@ void microphoneLifecycle() {
     rig.send(encodeMicrophonePcmRequest(8) + "\n");
     check(rig.until([&] { return !!rig.pendingPcm; }, 3000), "PCM generation: capture requested");
     const pid_t pid = rig.rt().pid();
-    check(::kill(pid, SIGSTOP) == 0, "PCM generation: pause child");
+    check(signalChild(pid, SIGSTOP), "PCM generation: pause child");
     int status = 0;
     check(::waitpid(pid, &status, WUNTRACED) == pid && WIFSTOPPED(status), "PCM generation: child paused");
     for (int i = 0; i < 2000; ++i) rig.state.setPower({});
     auto complete = std::move(rig.pendingPcm);
     MicrophonePcm old{8, {}, "old capture"};
     if (completedBeforeExit) complete(old);
-    check(::kill(pid, SIGKILL) == 0, "PCM generation: kill stalled child");
+    check(signalChild(pid, SIGKILL), "PCM generation: kill stalled child");
     check(rig.until([&] { return rig.running() && rig.rt().pid() != pid; }, 3000),
           "PCM generation: replacement child running");
     if (!completedBeforeExit) complete(old);
@@ -875,7 +945,7 @@ void microphoneStreamLifecycle() {
     check(rig.until([&] { return !!rig.streamReply; }, 3000), "stream: capture requested");
     auto reply = rig.streamReply;
     const pid_t pid = rig.rt().pid();
-    check(::kill(pid, SIGSTOP) == 0, "stream: pause consumer");
+    check(signalChild(pid, SIGSTOP), "stream: pause consumer");
     int status = 0;
     check(::waitpid(pid, &status, WUNTRACED) == pid && WIFSTOPPED(status), "stream: consumer paused");
     for (int i = 0; i < 2000; ++i) rig.state.setPower({});
@@ -891,7 +961,7 @@ void microphoneStreamLifecycle() {
     StreamEvent ended{7, StreamEvent::Kind::Ended, 3840, 0, 100, false, {}, "consumer stalled"};
     check(reply(ended), "stream: terminal reserved even at audio queue limit");
     expected.push_back(encodeStreamEvent(ended));
-    check(::kill(pid, SIGCONT) == 0, "stream: resume consumer");
+    check(signalChild(pid, SIGCONT), "stream: resume consumer");
     check(rig.until([&] { return rig.received().find(expected.back()) != std::string::npos; }, 3000),
           "stream: terminal delivered");
     const auto received = rig.received();
@@ -910,7 +980,7 @@ void microphoneStreamLifecycle() {
     check(rig.until([&] { return !!rig.streamReply; }, 3000), "stream generation: started");
     auto old = std::move(rig.streamReply);
     const pid_t pid = rig.rt().pid();
-    check(::kill(pid, SIGKILL) == 0, "stream generation: runtime exits");
+    check(signalChild(pid, SIGKILL), "stream generation: runtime exits");
     check(rig.until([&] { return rig.running() && rig.rt().pid() != pid; }, 3000), "stream generation: restarted");
     check(std::find(rig.streamControls.begin(), rig.streamControls.end(), std::make_pair(8, true)) != rig.streamControls.end(),
           "stream generation: exit revokes microphone lease");
@@ -928,7 +998,7 @@ void hardwareGate() {
   {
     Rig gated("ok");
     gated.hardware.ready = false;
-    gated.until([] { return false; }, 200);
+    gated.settle(200);
     check(gated.rt().spawns() == 0 && gated.hardware.prepares == 0, "no start before the lease holds the inputs");
     gated.hardware.ready = true;
     check(gated.until([&] { return gated.running(); }, 3000), "starts once the lease holds the inputs");
@@ -936,8 +1006,8 @@ void hardwareGate() {
   {
     Rig blocked("ok");
     blocked.hardware.prepareOk = false;
-    blocked.until([] { return false; }, 200);
-    check(blocked.rt().spawns() == 0 && blocked.hardware.prepares >= 3, "prepare retried until the lease agrees");
+    check(blocked.until([&] { return blocked.hardware.prepares >= 3; }, 200) && blocked.rt().spawns() == 0,
+          "prepare retried until the lease agrees");
     blocked.hardware.prepareOk = true;
     check(blocked.until([&] { return blocked.running(); }, 3000), "starts once the lease agrees");
   }
@@ -954,9 +1024,14 @@ int main(int argc, char** argv) {
   char resolved[PATH_MAX];
   fakeBinary = ::realpath(argv[1], resolved) ? resolved : argv[1];
   fakeAudio = ::realpath(argv[2], resolved) ? resolved : argv[2];
+  if (::access(fakeBinary.c_str(), X_OK) != 0 || ::access(fakeAudio.c_str(), X_OK) != 0) {
+    std::fprintf(stderr, "%s: build the fake runtime and audio helper first\n", argv[0]);
+    return 2;
+  }
   healthyRun();
   startReasons();
   deviceId();
+  activationId();
   forwardedLog();
   exitLinesReachTheNextRuntime();
   earlyLinesReachTheFirstRuntime();

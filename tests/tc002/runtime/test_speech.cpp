@@ -4,24 +4,43 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <map>
+#include <functional>
 #include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "platform/tc002/speech/SpeechLexicon.h"
+#include "platform/tc002/speech/SpeechFrontend.h"
+#include "platform/tc002/speech/SpeechModel.h"
 #include "platform/tc002/speech/SpeechRequest.h"
-#include "platform/tc002/speech/SpeechText.h"
 
 using namespace awtrix::speech;
 namespace {
 auto& passed = awtrix::test::passed();
 constexpr auto check = awtrix::test::require;
+// The English frontend of the release's voice pack (assets/speech/voice.atts).
+std::shared_ptr<const SpeechModel> g_pack;
+std::unique_ptr<const Frontend> g_english;
+const Frontend& english() { return *g_english; }
+bool prepare(std::string_view text, Plan& out) { return english().prepare(text, out); }
 Plan plan(const std::string& text) {
   Plan p;
   check(prepare(text, p), ("nothing to say in " + text).c_str());
   return p;
+}
+// readText() asks a voice; this one only reads.
+struct Reader final : SpeechVoice {
+  uint32_t rate() const override { return 24000; }
+  bool prepare(std::string_view text, Plan& out) const override { return english().prepare(text, out); }
+  std::unique_ptr<SpeechUtterance> start(const Plan&) override { return nullptr; }
+};
+void loadPack(const char* path) {
+  std::string error;
+  g_pack = SpeechModel::load(path, error);
+  check(g_pack != nullptr, ("the pack loads: " + error).c_str());
+  g_english = Frontend::parse(g_pack->frontendText, g_pack->frontendLexicon, error);
+  check(g_english != nullptr, ("its frontend parses: " + error).c_str());
+  check(g_english->phoneCount() == 41 && g_pack->phoneCount == 41, "English has the 41 phones of contract 1");
 }
 std::vector<PhoneId> sounds(const Plan& p) {
   std::vector<PhoneId> s;
@@ -30,87 +49,210 @@ std::vector<PhoneId> sounds(const Plan& p) {
 }
 
 }
-// The table against the TSV it was built from, where a decoder goes wrong: the ends of the table,
-// block starts, lengths escaped past 14, words with several variants and the words after them, and
-// the variant a word prefers.
-void checkLexicon(const char* file) {
-  using P = PhoneId;
-  const std::map<std::string, P> arpabet = {
-      {"AA",P::Aa},{"AE",P::Ae},{"AH",P::Ah},{"AO",P::Ao},{"AW",P::Au},{"AY",P::Ai},
-      {"B",P::B},{"CH",P::Ch},{"D",P::D},{"DH",P::Dh},{"EH",P::Eh},{"ER",P::Er},
-      {"EY",P::Ei},{"F",P::F},{"G",P::G},{"HH",P::H},{"IH",P::Ih},{"IY",P::Iy},
-      {"JH",P::Jh},{"K",P::K},{"L",P::L},{"M",P::M},{"N",P::N},{"NG",P::Ng},
-      {"OW",P::Ou},{"OY",P::Oi},{"P",P::P},{"R",P::R},{"S",P::S},{"SH",P::Sh},
-      {"T",P::T},{"TH",P::Th},{"UH",P::Uh},{"UW",P::Uw},{"V",P::V},{"W",P::W},
-      {"Y",P::J},{"Z",P::Z},{"ZH",P::Zh}};
-  std::ifstream input(file);
-  check(input.good(), "the TSV opens");
-  std::map<std::string, std::map<int, std::string>> entries;
-  std::string line;
-  while (std::getline(input, line)) {
-    if (line.empty() || line[0] == '#' || line.rfind("word\tcmu_variant\t", 0) == 0) continue;
-    const auto first = line.find('\t'), second = line.find('\t', first + 1);
-    entries[line.substr(0, first)][std::stoi(line.substr(first + 1, second - first - 1))] = line.substr(second + 1);
-  }
-  std::vector<std::string> words;
-  for (const auto& entry : entries) words.push_back(entry.first);
-  constexpr std::size_t kStride = 32;
-  const auto shared = [&](std::size_t i) {
-    if (i % kStride == 0) return std::size_t{0};
-    std::size_t n = 0;
-    while (n < words[i].size() && n < words[i - 1].size() && words[i][n] == words[i - 1][n]) ++n;
-    return n;
+// An uploaded pack is untrusted: a lexicon whose entries lie is refused when the pack loads.
+void checkHostileLexicon() {
+  const std::string_view good = g_pack->frontendLexicon;
+  const auto word32 = [&](std::size_t at) {
+    return uint32_t(uint8_t(good[at])) | uint32_t(uint8_t(good[at + 1])) << 8 | uint32_t(uint8_t(good[at + 2])) << 16 |
+           uint32_t(uint8_t(good[at + 3])) << 24;
   };
-  const auto prefers = [](const std::string& word) {
-    return word == "wind" || word == "live" || word == "read" || word == "lead" || word == "can" ||
-           word == "perfect" || word == "excuse";
+  const std::size_t first = 16 + std::size_t{word32(12)} * 4 + word32(16);
+  const unsigned lengths = uint8_t(good[first]);
+  check((lengths >> 4) == 0 && (lengths & 15) < 15, "the first word is stored whole and short");
+  const std::size_t variants = first + 1 + (lengths & 15), phones = variants + 1;
+  const auto refused = [&](const char* what, const std::function<void(std::string&)>& change) {
+    std::string lexicon(good);
+    change(lexicon);
+    std::string error;
+    check(!Frontend::parse(g_pack->frontendText, lexicon, error) && error == "fe.lexicon: bad block",
+          (std::string(what) + ": " + error).c_str());
   };
-  unsigned starts = 0, longPrefix = 0, longSuffix = 0, several = 0, after = 0, preferred = 0, checked = 0;
-  for (std::size_t i = 0; i < words.size(); ++i) {
-    const std::string& word = words[i];
-    const std::size_t prefix = shared(i);
-    const bool start = i % kStride == 0 && (i < 3 * kStride || i + kStride > words.size());
-    const bool severalHere = entries[word].size() >= 3;
-    const bool afterSeveral = i % kStride != 0 && entries[words[i - 1]].size() >= 3;
-    starts += start;
-    longPrefix += prefix >= 15;
-    longSuffix += word.size() - prefix >= 15;
-    several += severalHere;
-    after += afterSeveral;
-    preferred += prefers(word);
-    if (!(i == 0 || i + 1 == words.size() || start || prefix >= 15 || word.size() - prefix >= 15 ||
-          severalHere || afterSeveral || prefers(word)))
-      continue;
-    const auto& variants = entries[word];
-    auto chosen = variants.begin();
-    if (prefers(word) && variants.size() > 1) ++chosen;
-    detail::Pronunciation actual;
-    check(detail::englishPronunciation(word, false, actual), ("missing word " + word).c_str());
-    std::istringstream phones(chosen->second);
-    std::string phone;
-    std::size_t at = 0;
-    while (phones >> phone) {
-      unsigned stress = 0;
-      if (phone.back() >= '0' && phone.back() <= '2') { stress = phone.back() - '0'; phone.pop_back(); }
-      const auto id = phone == "AH" && stress == 0 ? P::Schwa : arpabet.at(phone);
-      check(at < actual.count && actual.phones[at].sound == id && actual.phones[at].prosody == stress,
-            ("phone and stress of " + word).c_str());
-      ++at;
-    }
-    check(at == actual.count, ("number of phones of " + word).c_str());
-    ++checked;
-  }
-  check(starts && longPrefix && longSuffix && several && after && preferred == 7, "every edge is in the table");
-  detail::Pronunciation missing;
-  for (const std::string& word : {std::string(), std::string("aaaaaawordmissing"), std::string("zzzzzzzzzzz"),
-                                  std::string("Hello"), std::string("hello!"), words.back() + "s",
-                                  std::string(64, 'a')})
-    check(!detail::englishPronunciation(word, false, missing) && missing.count == 0, "an absent word finds nothing");
-  std::printf("lexicon: %u of %zu words at the decoder's edges checked\n", checked, words.size());
+  refused("a word longer than a word", [&](std::string& l) { l[phones] = char(200); });
+  refused("a word without phones", [&](std::string& l) { l[phones] = 0; });
+  refused("a word without variants", [&](std::string& l) { l[variants] = 0; });
+  refused("a block that starts with a shared prefix", [&](std::string& l) { l[first] = char(0x30 | (lengths & 15)); });
+  refused("a phone outside the inventory", [&](std::string& l) { l[phones + 1] = char(0x3F); });
+  refused("a lexicon cut short", [&](std::string& l) { l.resize(l.size() - 3); });
 }
+// prepare() runs on the loop thread, so the frontend reads its own lexicon and never the pack's file.
+void checkLexiconIsItsOwn() {
+  std::string lexicon(g_pack->frontendLexicon), error;
+  const auto frontend = Frontend::parse(g_pack->frontendText, lexicon, error);
+  check(frontend != nullptr, ("the frontend parses: " + error).c_str());
+  Frontend::Word before, after;
+  check(frontend->lookup("hello", false, before) && before.count > 0, "the lexicon knows a word");
+  std::fill(lexicon.begin(), lexicon.end(), '\0');
+  check(frontend->lookup("hello", false, after) && after.count == before.count, "and still does without the pack's bytes");
+}
+// A one-block fe.lexicon as Frontend::parse() reads it, keys in byte order, one pronunciation each:
+// a phone's id in 6 bits, a vowel's stress in 2 more.
+std::string lexiconOf(const std::vector<std::pair<std::string, std::vector<Phone>>>& entries) {
+  const auto u32 = [](std::string& out, uint32_t v) { for (int b = 0; b < 4; ++b) out += char(v >> (8 * b)); };
+  std::string out = "LXR1";
+  out += char(entries.size());
+  out += char(0);
+  out += char(english().phoneCount());
+  out += char(0);
+  u32(out, uint32_t(entries.size()));
+  u32(out, 1);
+  u32(out, 0);
+  for (const auto& [word, phones] : entries) {
+    out += char(word.size());
+    out += word;
+    out += char(1);
+    out += char(phones.size());
+    uint64_t bits = 0;
+    unsigned used = 0;
+    for (const Phone& phone : phones) {
+      bits |= uint64_t(phone.sound) << used;
+      used += 6;
+      if (english().vowel(std::size_t(phone.sound))) {
+        bits |= uint64_t(phone.prosody & 3) << used;
+        used += 2;
+      }
+    }
+    for (unsigned b = 0; b < used; b += 8) out += char(bits >> b);
+  }
+  return out;
+}
+
+// Words joined by hyphens are one word when the lexicon knows them joined, else separate words.
+void checkHyphenatedWords() {
+  using P = PhoneId;
+  check(sounds(plan("x-ray")) == sounds(plan("x ray")), "a hyphen the lexicon does not know separates words");
+  check(sounds(plan("e-mail")) == sounds(plan("e mail")), "the release lexicon has no hyphenated words");
+  const std::vector<Phone> email{{P::Iy, Primary}, {P::M, 0}, {P::Ei, Secondary}, {P::L, 0}};
+  const std::vector<Phone> tshirt{{P::T, 0}, {P::Iy, Primary}, {P::Sh, 0}, {P::Er, Secondary}, {P::T, 0}};
+  static const std::string lexicon = lexiconOf({{"e-mail", email}, {"t-shirt", tshirt}});
+  std::string error;
+  const auto frontend = Frontend::parse(g_pack->frontendText, lexicon, error);
+  check(frontend != nullptr, ("a lexicon with hyphenated words parses: " + error).c_str());
+  const auto said = [&](std::string_view text) {
+    Plan p;
+    check(frontend->prepare(text, p), "something to say");
+    return sounds(p);
+  };
+  const auto phones = [](std::initializer_list<std::vector<Phone>> words) {
+    std::vector<P> s;
+    for (const auto& word : words) for (const Phone& phone : word) s.push_back(phone.sound);
+    return s;
+  };
+  check(said("e-mail") == phones({email}), "a hyphenated word from the lexicon is one word");
+  check(said("E-Mail") == phones({email}), "folding comes before the lookup");
+  Plan p;
+  check(frontend->prepare("e-mail", p) && (p.phones[p.count - 2].prosody & WordEnd) &&
+            !(p.phones[0].prosody & WordEnd), "it ends once, as one word");
+  check(said("t-shirt-shop") == said("t-shirt shop"), "the longest known start of a chain is one word");
+  check(said("a-t-shirt") == said("a t-shirt"), "a known word may follow an unknown part");
+  check(said("x-ray") == said("x ray"), "an unknown chain still separates");
+}
+
+// The English tables with more lines; compares what two texts say in that frontend.
+struct Extended {
+  std::string text;
+  std::unique_ptr<const Frontend> frontend;
+  explicit Extended(const std::string& extra) : text(std::string(g_pack->frontendText) + extra) {
+    std::string error;
+    frontend = Frontend::parse(text, g_pack->frontendLexicon, error);
+    check(frontend != nullptr, ("extended tables parse: " + error).c_str());
+  }
+  std::vector<PhoneId> said(std::string_view text) const {
+    Plan p;
+    check(frontend->prepare(text, p), "something to say");
+    return sounds(p);
+  }
+  bool same(std::string_view a, std::string_view b) const { return said(a) == said(b); }
+};
+
+// [abbreviations] and [spell]: written units and acronyms.
+void checkAbbreviationsAndAcronyms() {
+  std::string letters = "\n[spell]\n";
+  const char* names[] = {"ay", "bee", "see", "dee", "ee", "eff", "gee", "aitch", "eye", "jay", "kay", "el", "em",
+                         "en", "oh", "pee", "cue", "ar", "ess", "tee", "you", "vee", "double you", "ex", "why", "zed"};
+  for (char l = 'a'; l <= 'z'; ++l) letters += std::string(1, l) + "\t" + names[l - 'a'] + "\n";
+  const Extended en("\n[abbreviations]\nkm/h\tkilometers per hour\nm/s\tmeters per second\nm\tmeters\n" + letters);
+  check(en.same("25 km/h", "twenty five kilometers per hour"), "a written unit reads its words");
+  check(en.same("25km/h", "twenty five kilometers per hour"), "a number may touch the unit");
+  check(en.same("KM/H", "kilometers per hour"), "a unit is matched after folding");
+  check(en.same("3 m/s", "three meters per second"), "the longest abbreviation wins");
+  check(en.same("5 m away", "five meters away"), "a short abbreviation alone");
+  check(en.same("my mom", "my mom"), "an abbreviation only matches a whole word");
+  check(en.same("kmh", "kmh"), "an unlisted spelling stays a word");
+  check(en.same("Parcel from DHL", "parcel from dee aitch el"), "an acronym is spelled");
+  check(en.same("The SNCF strike", "the ess en see eff strike"), "four capitals without a vowel are spelled");
+  check(en.same("The NASA team", "the nasa team"), "four capitals with a vowel are a word");
+  check(en.same("CALL ME NOW", "call me now"), "a text all in capitals is read, not spelled");
+  check(en.same("A new TV", "a new tee vee"), "two capitals are spelled");
+  check(en.same("the Tv", "the tv"), "a word with lower case is no acronym");
+  check(en.same("DHLs", "dhls"), "capitals inside a longer word are no acronym");
+  check(en.same("Code ABCDEF here", "code abcdef here"), "six capitals are a word");
+  check(en.same("Ship it with UPS", "ship it with you pee ess"), "an acronym is no word of the lexicon");
+  check(en.same("Ship it with ups", "ship it with ups"), "the word in lower case is");
+  const Extended plain("\n[abbreviations]\nkm/h\tkilometers per hour\n");
+  check(plain.same("Parcel from DHL", "parcel from dhl"), "without letter names nothing is spelled");
+  // A lexicon entry in capitals is the reading of that acronym.
+  using P = PhoneId;
+  const std::vector<Phone> nato{{P::N, 0}, {P::Ei, Primary}, {P::T, 0}, {P::Ou, 0}};
+  static const std::string lexicon = lexiconOf({{"UPS", nato}});
+  std::string error;
+  const std::string text = std::string(g_pack->frontendText) + letters;
+  const auto frontend = Frontend::parse(text, lexicon, error);
+  check(frontend != nullptr, ("a lexicon with an acronym parses: " + error).c_str());
+  Plan p;
+  check(frontend->prepare("Ship it with UPS", p) && p.count > nato.size(), "something to say");
+  check(std::equal(nato.begin(), nato.end(), p.phones.begin() + (p.count - 1 - nato.size()),
+                   [](const Phone& a, const Phone& b) { return a.sound == b.sound; }),
+        "an acronym reads its entry in capitals");
+}
+
+// The optional [numbers] lines: ten thousands, skipped places, counts, units and hours.
+void checkNumberReadings() {
+  // Mandarin-like grouping in English words: wan = 10 000, ling for skipped places.
+  const Extended zh("\n[numbers]\nten thousand\twan\nzero\tling\nten prefix\tyi\ntwo count\tliang\n"
+                    "percent first\tpercent of\nyear word\tnian\n");
+  check(zh.same("105", "one hundred ling five"), "a skipped place says zero once");
+  check(zh.same("110", "one hundred yi ten"), "ten after a place takes its prefix");
+  check(zh.same("10", "ten"), "ten alone takes no prefix");
+  check(zh.same("1005", "one thousand ling five"), "skipped hundreds and tens say zero once");
+  check(zh.same("1010", "one thousand ling yi ten"), "zero and the ten prefix together");
+  check(zh.same("2000", "liang thousand"), "two counting thousands");
+  check(zh.same("20000", "liang wan"), "two counting ten thousands");
+  check(zh.same("12345", "one wan liang thousand three hundred forty five"), "groups of ten thousand");
+  check(zh.same("100000", "ten wan"), "a count of ten thousands");
+  check(zh.same("100500", "ten wan ling five hundred"), "zero after ten thousands");
+  check(zh.same("25%", "percent of twenty five"), "the percent word comes first");
+  check(zh.same("2026 nian", "two zero two six nian"), "a year reads digit by digit");
+  check(zh.same("2026 apples", "liang thousand ling twenty six apples"), "only before the year word");
+  // Spanish, Polish and German forms.
+  const Extended forms("\n[numbers]\nhundred 1 exact\ta hundred\nthousand few\tgrand\nhour 7\tseventh\n"
+                       "hour 0\tmidnight\none before word\tone\ta\none before word\ttwenty one\ttwentyone\n");
+  check(forms.same("100", "a hundred"), "a hundred alone has its own word");
+  check(forms.same("101", "one hundred one"), "a hundred with a rest keeps the other");
+  check(forms.same("3000", "three grand"), "counts ending in 2 to 4 take the few form");
+  check(forms.same("13000", "thirteen thousand"), "12 to 14 do not");
+  check(forms.same("23000", "twenty three grand"), "23 does");
+  check(forms.same("25000", "twenty five thousand"), "25 does not");
+  check(forms.same("7:05", "seventh oh five"), "an hour of a time may have its own word");
+  check(forms.same("0:30", "midnight thirty"), "so may hour zero");
+  check(forms.same("8:00", "eight o'clock"), "other hours read their number");
+  check(forms.same("1 hour", "a hour"), "a count before a word takes its form");
+  check(forms.same("21 hours", "twentyone hours"), "the longest ending wins");
+  check(forms.same("101 hours", "one hundred a hours"), "the ending of a longer number");
+  check(forms.same("1%", "a percent"), "before a unit sign too");
+  check(forms.same("Number 1.", "number one."), "not before punctuation");
+  check(forms.same("1.5 hours", "one point five hours"), "not after a decimal");
+  check(forms.same("1 2", "one two"), "not before another number");
+  check(Extended("").same("2026 nian", "two thousand twenty six nian"), "tables without the lines read as before");
+}
+
 int main(int argc, char** argv) {
-  if (argc == 3 && std::string(argv[1]) == "--lexicon") { checkLexicon(argv[2]); return 0; }
-  if (argc != 1) { std::fprintf(stderr, "usage: tc002-speech-test [--lexicon FILE]\n"); return 2; }
+  if (argc != 2) { std::fprintf(stderr, "usage: tc002-speech-test PACK\n"); return 2; }
+  loadPack(argv[1]);
+  checkHostileLexicon();
+  checkLexiconIsItsOwn();
+  checkHyphenatedWords();
+  checkAbbreviationsAndAcronyms();
+  checkNumberReadings();
   using P = PhoneId;
   // Independent CMUdict fixtures: HH AH0 L OW1, G UH1 D, AH1 DH ER0.
   check(sounds(plan("hello")) == std::vector<P>{P::H, P::Schwa, P::L, P::Ou}, "hello: lexical diphthong");
@@ -167,18 +309,19 @@ int main(int argc, char** argv) {
   for (const char* text : {"", "...", " \xF0\x9F\x98\x80 ", "\xC3"})
     check(!prepare(text, cut) && cut.count == 0, "nothing to say");
   check(prepare(std::string(512, '7'), cut), "too much to say is cut short");
-  check(cut.count + detail::kMaxWordPhones >= kMaxPhones && cut.phones[cut.count - 1].sound == PhoneId::Silence,
+  check(cut.count + Frontend::kMaxWordPhones >= kMaxPhones && cut.phones[cut.count - 1].sound == PhoneId::Silence,
         "a cut plan is full and ends with a pause");
   std::string unsayable;
   for (int i = 0; i < 30; ++i) unsayable += "qx";
   check(prepare(unsayable + " ok", cut) && sounds(cut) == sounds(plan("ok")), "a word too long to say is left out");
 
   awtrix::DispatchDetail error;
-  check(readText("Hello", cut, error) && sounds(cut) == sounds(plan("hello")), "a text is read as its words");
+  const Reader reader;
+  check(readText(reader, "Hello", cut, error) && sounds(cut) == sounds(plan("hello")), "a text is read as its words");
   std::string longest;
   while (longest.size() + 6 <= kMaxTextBytes) longest += "hello ";
   longest.resize(kMaxTextBytes, 'o');
-  check(readText(longest, cut, error), "512 bytes of text are taken");
+  check(readText(reader, longest, cut, error), "512 bytes of text are taken");
   const std::pair<std::string, const char*> refused[] = {
       {"", "must be 1..512 bytes"},
       {std::string(kMaxTextBytes + 1, 'a'), "must be 1..512 bytes"},
@@ -186,7 +329,7 @@ int main(int argc, char** argv) {
   };
   for (const auto& text : refused) {
     error = {};
-    check(!readText(text.first, cut, error) && error.field.empty() && error.message == text.second,
+    check(!readText(reader, text.first, cut, error) && error.field.empty() && error.message == text.second,
           text.first.c_str());
   }
   std::printf("speech frontend contracts: %u passed\n", passed.load());

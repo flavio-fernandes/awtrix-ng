@@ -132,7 +132,7 @@ void HttpApiServer::handleRestoreUpload() {
     restoreSink_.reset(new backup::PicoRestoreSink(*cfg_, &engine_->state(), onConfigChanged_));
 #else
     restoreSink_.reset(
-        new LittleFsRestoreSink(*cfg_, &engine_->state(), onConfigChanged_, releaseFiles_));
+        new LittleFsRestoreSink(*cfg_, &engine_->state(), engine_, onConfigChanged_, releaseFiles_));
 #endif
     restoreApplier_.reset(new backup::RestoreApplier(*restoreSink_));
     restoreReader_.reset(new backup::ZipReader(*restoreApplier_));

@@ -2,7 +2,9 @@
 
 #include <LittleFS.h>
 
+#include <functional>
 #include <string>
+#include <utility>
 
 #include "persistence/FsRestoreSink.h"
 
@@ -12,7 +14,9 @@ namespace awtrix::backup {
 // restore leaves no partial file, and every folder a nested entry needs is created.
 class PicoRestoreSink : public FsRestoreSink {
  public:
-  using FsRestoreSink::FsRestoreSink;
+  // No station list: the Pico has no radio, so a backup's radio.json is skipped with a reason.
+  PicoRestoreSink(DeviceConfig& live, StateStore* state, std::function<void()> onConfigChanged = {})
+      : FsRestoreSink(live, state, nullptr, std::move(onConfigChanged)) {}
   bool beginFile(const std::string& path, std::string& err) override;
   bool writeFile(const uint8_t* data, std::size_t n) override;
   bool endFile() override;

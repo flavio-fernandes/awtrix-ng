@@ -20,6 +20,7 @@
 #include "platform/tc002/daemon/ControlSocket.h"
 #include "platform/tc002/daemon/EventLoop.h"
 #include "platform/posix/Files.h"
+#include "platform/tc002/daemon/HardwareId.h"
 #include "platform/tc002/daemon/HardwareLease.h"
 #include "platform/tc002/daemon/Kernel.h"
 #include "platform/tc002/daemon/Log.h"
@@ -186,6 +187,12 @@ RuntimeOptions makeRuntimeOptions(const DaemonOptions& options, const std::strin
   runtimeOptions.firstStartReason = startReason;
   Log::line("daemon", "the first runtime starts as %s", startReason.c_str());
   runtimeOptions.uidPath = options.deviceIdPath();
+  UniqueId uniqueId{};
+  std::string idError;
+  if (!readUniqueId(options.uniqueIdDevice(), uniqueId, idError))
+    Log::line("daemon", "no activation id: %s", idError.c_str());
+  else if ((runtimeOptions.activationId = activationId(uniqueId)).empty())
+    Log::line("daemon", "no activation id: the driver reports a blank id");
   if (!confirmPending) runtimeOptions.bootAttemptsPaths = options.bootAttemptsPaths();
   runtimeOptions.httpPort = options.httpPort;
   runtimeOptions.pcm = options.pcmBackend();
@@ -197,8 +204,13 @@ RuntimeOptions makeRuntimeOptions(const DaemonOptions& options, const std::strin
   struct stat sound{};
   if (::stat(options.bootSoundPath().c_str(), &sound) == 0 && S_ISREG(sound.st_mode))
     runtimeOptions.bootSound = options.bootSoundPath();
-  if (regularFile(options.speechVoicePath())) runtimeOptions.speechVoice = options.speechVoicePath();
-  else Log::line("daemon", "no voice at %s; the runtime starts without speech", options.speechVoicePath().c_str());
+  const auto useIfPresent = [](const std::string& path, std::string& option, const char* name) {
+    if (regularFile(path)) option = path;
+    else Log::line("daemon", "no %s at %s", name, path.c_str());
+  };
+  useIfPresent(options.speechVoicePath(), runtimeOptions.speechVoice, "voice");
+  useIfPresent(options.wakeWordPath(), runtimeOptions.wakeWord, "wake word");
+  useIfPresent(options.vadPath(), runtimeOptions.vad, "voice activity model");
   Log::line("daemon", "boot intro %s: %s%s", bootIntroName(options.bootIntro),
             introStarts == IntroStarts::First   ? "first runtime start"
             : introStarts == IntroStarts::Every ? "every runtime start"

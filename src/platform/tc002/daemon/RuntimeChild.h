@@ -68,11 +68,15 @@ struct RuntimeOptions {
   // once per daemon.
   std::string uidPath;
   int64_t uidWaitMs = 20000;
+  // Passed as kActivationFlag to every runtime when set (HardwareId.h).
+  std::string activationId;
   // The starts that show the power-on intro (--boot-intro), with bootSound playing along when set.
   IntroStarts introStarts = IntroStarts::None;
   std::string bootSound;
   // The voice file, passed as --speech-voice to every runtime that gets the speaker.
   std::string speechVoice;
+  std::string wakeWord;
+  std::string vad;
   int64_t prepareRetryMs = 100;
   std::vector<int64_t> backoffMs{1000, 2000, 5000, 10000, 30000};
   // Whether the runtime may ask for the Bluetooth controller (kBluetoothFlag).

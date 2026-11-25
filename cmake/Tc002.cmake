@@ -11,10 +11,9 @@ set_source_files_properties(
   "${PROJECT_SOURCE_DIR}/src/core/audio/PitchDetector.cpp"
   "${TC002_DIR}/audio/Tc002AudioMixer.cpp"
   PROPERTIES COMPILE_OPTIONS -O2)
-# Speech: the English text frontend and the worker that runs a voice for the mixer.
+# Speech: the text frontend a voice pack carries and the worker that runs a voice for the mixer.
 set(TC002_SPEECH_DIR "${TC002_DIR}/speech")
-set(TC002_SPEECH_SOURCES "${TC002_SPEECH_DIR}/SpeechText.cpp" "${TC002_SPEECH_DIR}/SpeechPronunciation.cpp"
-  "${TC002_SPEECH_DIR}/SpeechLexicon.cpp" "${TC002_SPEECH_DIR}/SpeechRequest.cpp"
+set(TC002_SPEECH_SOURCES "${TC002_SPEECH_DIR}/SpeechFrontend.cpp" "${TC002_SPEECH_DIR}/SpeechRequest.cpp"
   "${TC002_SPEECH_DIR}/SpeechSource.cpp")
 add_library(tc002_speech STATIC ${TC002_SPEECH_SOURCES})
 target_link_libraries(tc002_speech PUBLIC awtrix_core PRIVATE awtrix_warnings)
@@ -22,13 +21,26 @@ target_link_libraries(tc002_speech PUBLIC awtrix_core PRIVATE awtrix_warnings)
 set(TC002_SPEECH_VOICE_SOURCES "${TC002_SPEECH_DIR}/SpeechModel.cpp" "${TC002_SPEECH_DIR}/SpeechKernels.cpp"
   "${TC002_SPEECH_DIR}/SpeechWave.cpp" "${TC002_SPEECH_DIR}/SpeechTokens.cpp" "${TC002_SPEECH_DIR}/SpeechSynth.cpp"
   "${TC002_SPEECH_DIR}/SpeechModelVoice.cpp")
-set(TC002_SPEECH_VOICE_OPTIONS -O2 -ffp-contract=off)
+set(TC002_EXACT_FLOAT_OPTIONS -O2 -ffp-contract=off)
 add_library(tc002_speech_voice STATIC ${TC002_SPEECH_VOICE_SOURCES})
-target_compile_options(tc002_speech_voice PRIVATE ${TC002_SPEECH_VOICE_OPTIONS})
-target_link_libraries(tc002_speech_voice PUBLIC awtrix_posix PRIVATE awtrix_warnings)
+target_compile_options(tc002_speech_voice PRIVATE ${TC002_EXACT_FLOAT_OPTIONS})
+target_link_libraries(tc002_speech_voice PUBLIC tc002_speech awtrix_posix PRIVATE awtrix_warnings)
+set(TC002_WAKE_DIR "${TC002_DIR}/wake")
+set(TC002_WAKE_SOURCES "${TC002_WAKE_DIR}/WakeFft.cpp" "${TC002_WAKE_DIR}/WakeFrontend.cpp"
+  "${TC002_WAKE_DIR}/WakeModel.cpp" "${TC002_WAKE_DIR}/WakeLoader.cpp" "${TC002_WAKE_DIR}/WakeOperators.cpp"
+  "${TC002_WAKE_DIR}/WakeKernels.cpp" "${TC002_WAKE_DIR}/ModelStream.cpp" "${TC002_WAKE_DIR}/ProbabilityWindow.cpp"
+  "${TC002_WAKE_DIR}/WakeDetector.cpp" "${TC002_WAKE_DIR}/Endpointer.cpp")
+add_library(tc002_wake STATIC ${TC002_WAKE_SOURCES})
+target_compile_options(tc002_wake PRIVATE ${TC002_EXACT_FLOAT_OPTIONS})
+target_include_directories(tc002_wake PUBLIC "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(tc002_wake PRIVATE awtrix_warnings)
+add_library(tc002_wake_files STATIC "${TC002_WAKE_DIR}/ModelFiles.cpp")
+target_include_directories(tc002_wake_files PUBLIC "${PROJECT_SOURCE_DIR}/src")
+target_link_libraries(tc002_wake_files PRIVATE awtrix_json awtrix_posix awtrix_warnings)
 
 add_library(tc002_contract STATIC "${TC002_DIR}/contract/SupervisorProtocol.cpp"
-  "${TC002_DIR}/contract/Pcm16.cpp" "${TC002_DIR}/contract/MicrophoneStream.cpp" "${TC002_DIR}/contract/InputIdentity.cpp")
+  "${TC002_DIR}/contract/Pcm16.cpp" "${TC002_DIR}/contract/MicrophoneStream.cpp"
+  "${TC002_DIR}/contract/MicrophoneClient.cpp" "${TC002_DIR}/contract/InputIdentity.cpp")
 target_link_libraries(tc002_contract PUBLIC awtrix_json PRIVATE awtrix_warnings)
 
 add_library(tc002_update STATIC "${TC002_DIR}/update/PackageFormat.cpp" "${TC002_DIR}/update/ReleaseManifest.cpp"
@@ -51,7 +63,9 @@ set(TC002_RUNTIME_SOURCES ${TC002_SUPERVISION_SOURCES}
   "${TC002_RUNTIME_DIR}/Tc002ClockApp.cpp" "${TC002_RUNTIME_DIR}/Tc002Input.cpp"
   "${TC002_RUNTIME_DIR}/Tc002QuickSettings.cpp" "${TC002_RUNTIME_DIR}/Tc002StatusApp.cpp"
   "${TC002_RUNTIME_DIR}/Tc002Provisioning.cpp"
-  "${TC002_RUNTIME_DIR}/Tc002Target.cpp" "${TC002_RUNTIME_DIR}/Tc002Update.cpp")
+  "${TC002_RUNTIME_DIR}/Tc002Target.cpp" "${TC002_RUNTIME_DIR}/Tc002Update.cpp"
+  "${TC002_RUNTIME_DIR}/Tc002Activation.cpp" "${TC002_RUNTIME_DIR}/Tc002ActivationApi.cpp"
+  "${TC002_RUNTIME_DIR}/Tc002ActivationHttp.cpp")
 set(TC002_BOOT_SCREEN_SOURCES "${TC002_RUNTIME_DIR}/BootIntroWide.cpp" "${TC002_RUNTIME_DIR}/BootInfoWide.cpp"
   "${TC002_RUNTIME_DIR}/TerminalFont.cpp")
 # The runtime's speaker: the sink with its mixer, sources and player, and speech in front of it.
@@ -66,8 +80,9 @@ add_library(tc002_audio STATIC
   "${TC002_DIR}/audio/Tc002AudioRequests.cpp"
   "${TC002_DIR}/audio/Tc002AudioSongs.cpp"
   "${TC002_DIR}/audio/Tc002AudioPlayback.cpp"
-  "${TC002_DIR}/audio/Tc002AudioPlan.cpp")
-target_link_libraries(tc002_audio PUBLIC tc002_speech awtrix_host PRIVATE awtrix_warnings)
+  "${TC002_DIR}/audio/Tc002AudioPlan.cpp"
+  "${TC002_SPEECH_DIR}/VoicePacks.cpp")
+target_link_libraries(tc002_audio PUBLIC tc002_speech tc002_speech_voice awtrix_host PRIVATE awtrix_warnings)
 # The speaker helper awtrix-tc002-audio-pcm, the daemon's client of the awtrix_pcm driver.
 set(TC002_AUDIO_PCM_CORE "${TC002_DIR}/audio/helper/audio_helper.c" "${TC002_DIR}/audio/pcm/pcm_backend.c")
 set(TC002_AUDIO_PCM_FRAME "${TC002_DIR}/audio/helper/audio_owner.c" "${TC002_DIR}/audio/helper/audio_process.c")
@@ -119,10 +134,12 @@ target_link_libraries(tc002_mcu_firmware PUBLIC awtrix_json awtrix_posix PRIVATE
 
 add_library(tc002d_core STATIC
   "${TC002D_DIR}/Autostart.cpp"
+  "${TC002D_DIR}/BatteryGauge.cpp"
   "${TC002D_DIR}/BtService.cpp"
   "${TC002D_DIR}/ControlSocket.cpp"
   "${TC002D_DIR}/DeviceId.cpp"
   "${TC002D_DIR}/EventLoop.cpp"
+  "${TC002D_DIR}/HardwareId.cpp"
   "${TC002D_DIR}/HardwareLease.cpp"
   "${TC002D_DIR}/McuFrame.cpp"
   "${TC002D_DIR}/McuPcm.cpp"

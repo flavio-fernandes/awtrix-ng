@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <cerrno>
 #include <cmath>
@@ -231,6 +232,11 @@ struct FakeHelper {
     return this->*member;
   }
 };
+
+bool playsAfterVolume(const std::vector<uint8_t>& types, std::size_t from) {
+  const auto volume = std::find(types.begin() + static_cast<std::ptrdiff_t>(from), types.end(), TC002_AUDIO_VOLUME);
+  return volume != types.end() && std::find(volume, types.end(), TC002_AUDIO_PCM) != types.end();
+}
 
 struct Pair {
   int runtime = -1;
@@ -510,7 +516,7 @@ void test_clip_sources() {
   std::string error;
   const std::vector<int16_t> mono = ramp(1600);
   const std::string wav = wavClip(16000, 1, mono);
-  check(checkClip(wav, error), "a 16 kHz mono WAV is a clip");
+  check(checkClip(wav, error) == ClipKind::Wav, "a 16 kHz mono WAV is a clip");
   std::unique_ptr<PcmSource> source = openClip(shared(wav));
   check(source && source->rate() == 16000 && source->channels() == 1, "and plays at its own format");
   check(drainSource(*source) == mono, "every sample of a WAV clip, in order");
@@ -518,7 +524,7 @@ void test_clip_sources() {
   std::vector<int16_t> stereo = ramp(4800);
   const std::string list("LIST\x03\0\0\0abc\0", 12);
   const std::string tagged = wavClip(48000, 2, stereo, 16, list);
-  check(checkClip(tagged, error), "a stereo WAV with an odd-sized chunk before the data");
+  check(checkClip(tagged, error) == ClipKind::Wav, "a stereo WAV with an odd-sized chunk before the data");
   source = openClip(shared(tagged));
   check(source && source->rate() == 48000 && source->channels() == 2 && drainSource(*source) == stereo,
         "plays past the chunk it does not know");
@@ -534,7 +540,7 @@ void test_clip_sources() {
   Mp3FileSource reference(host::hostPath("/MP3/clip.mp3"));
   const std::vector<int16_t> decoded = drainSource(reference);
   const std::string mp3(reinterpret_cast<const char*>(ksine_mono_64k_mp3), sizeof ksine_mono_64k_mp3);
-  check(checkClip(mp3, error), "an MPEG-1 MP3 is a clip");
+  check(checkClip(mp3, error) == ClipKind::Mp3, "an MPEG-1 MP3 is a clip");
   source = openClip(shared(mp3));
   check(source && drainSource(*source) == decoded && source->rate() == 44100,
         "an MP3 clip decodes exactly like the same file");
@@ -547,12 +553,12 @@ void test_clip_sources() {
   id3 += static_cast<char>((tagSize >> 7) & 0x7F);
   id3 += static_cast<char>(tagSize & 0x7F);
   id3.append(tagSize, '\0');
-  check(checkClip(id3 + mp3, error), "an ID3 tag in front is fine");
+  check(checkClip(id3 + mp3, error) == ClipKind::Mp3, "an ID3 tag in front is fine");
   source = openClip(shared(id3 + mp3));
   check(source && drainSource(*source) == decoded, "and is never decoded");
 
   const std::string lsf(reinterpret_cast<const char*>(ksine_mono_24khz_48k_mp3), sizeof ksine_mono_24khz_48k_mp3);
-  check(checkClip(lsf, error), "an MPEG-2 MP3 is a clip");
+  check(checkClip(lsf, error) == ClipKind::Mp3, "an MPEG-2 MP3 is a clip");
   source = openClip(shared(lsf));
   check(source && !drainSource(*source).empty() && source->rate() == 24000, "and plays at 24 kHz");
 
@@ -629,7 +635,9 @@ void test_voice_wav_and_ownership() {
   Rig rig;
   check(rig.sink->playLoop("/MP3/sine.mp3"),"competing loop starts");
   check(waitFor([&]{return rig.helper.get(&FakeHelper::received)>0;},2000),"loop reaches speaker");
-  rig.sink->setVoiceOwned(true);
+  posix::Hold channel = rig.sink->claimVoiceChannel();
+  check(static_cast<bool>(channel) && !rig.sink->claimVoiceChannel(),
+        "the voice channel has one holder: a second claim fails while the first holds it");
   check(!rig.sink->playMp3("/MP3/sine.mp3", sound::Group::Alert) && !rig.sink->playEffect("/MP3/sine.mp3") &&
         !rig.sink->playRtttl("tone:d=4,o=5,b=120:c", sound::Group::Alert),"voice excludes competing sounds");
   check(waitFor([&]{return rig.sink->voiceQuiet();},2000),"capture waits for speaker stop acknowledgement");
@@ -638,8 +646,9 @@ void test_voice_wav_and_ownership() {
   check(waitFor([&]{return rig.sink->systemFinished();},3000),"voice completion follows speaker drain");
   int64_t audible=-1;
   check(rig.sink->systemStart(audible)==Tc002AudioSink::SystemStart::Audible && audible>=0,"voice was audible");
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
   check(rig.sink->playMp3("/MP3/sine.mp3", sound::Group::Alert),"normal sound available after voice");
+  check(static_cast<bool>(rig.sink->claimVoiceChannel()), "and the voice channel can be claimed again");
 }
 
 // Samples of one value, so the helper can tell which clip it is hearing.
@@ -690,21 +699,30 @@ void test_sink_clips() {
   check(!rig.sink->oneShotPlaying() && !rig.router.alertPlaying(), "stopping the alerts stops a clip");
   check(waitFor([&] { return rig.helper.get(&FakeHelper::stops) == stops + 1; }, 1000), "at once");
 
-  rig.sink->setVoiceOwned(true);
+  posix::Hold channel = rig.sink->claimVoiceChannel();
   detail.clear();
   check(tc002::playClip(rig.sink.get(), rig.router, steadyWav(4000, 1600), detail) == DispatchResult::Unavailable &&
             detail.message == "speaker unavailable", "the voice assistant's speaker takes no clip");
   check(!rig.sink->oneShotPlaying(), "and nothing is asked to play");
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
   check(tc002::playClip(rig.sink.get(), rig.router, steadyWav(4000, 1600), detail) == DispatchResult::Ok,
         "clips play again after the voice");
 }
 
-// A steady tone at 24 kHz for as long as asked, cancelled or not.
+// A steady tone at 24 kHz for as long as asked, cancelled or not. It reads a letter as a phone.
 struct SteadyVoice : speech::SpeechVoice {
   std::size_t samples = 2400;
   std::atomic<int> cancels{0};
   uint32_t rate() const override { return 24000; }
+  bool prepare(std::string_view text, speech::Plan& out) const override {
+    out.count = 0;
+    for (const char c : text)
+      if (std::isalpha(static_cast<unsigned char>(c)) && out.count + 1 < speech::kMaxPhones)
+        out.phones[out.count++] = {static_cast<speech::PhoneId>(1), 0};
+    if (!out.count) return false;
+    out.phones[out.count++] = {speech::PhoneId::Silence, 0};
+    return true;
+  }
   std::unique_ptr<speech::SpeechUtterance> start(const speech::Plan&) override {
     struct Utterance : speech::SpeechUtterance {
       SteadyVoice& voice;
@@ -753,8 +771,10 @@ void test_sink_speech() {
   check(rig.router.play(say("Hello"), sound::Group::Alert, "", detail) == sound::PlayResult::Ok,
         "speech starts");
   check(rig.sink->oneShotPlaying() && rig.router.alertPlaying(), "and counts as playing from its request on");
+  check(rig.sink->speaking(), "the sink knows it is speech");
   check(waitFor([&] { return heard(rig.helper, -1000); }, 2000), "the voice reaches the speaker");
   check(waitFor([&] { return !rig.router.alertPlaying(); }, 3000), "and ends once heard");
+  check(!rig.sink->speaking(), "and that it has ended");
   rig.tick();
   check(rig.router.alertStatus().name == "speech" && !rig.router.alertStatus().playing,
         "the state names speech and shows it ended");
@@ -777,17 +797,18 @@ void test_sink_speech() {
   check(tc002::playClip(rig.sink.get(), rig.router, steadyWav(4000, 1600), detail) == DispatchResult::Ok &&
             waitFor([&] { return voice->cancels == 2; }, 2000),
         "a newer one-shot cancels it");
+  check(!rig.sink->speaking(), "and a clip is not speech");
   check(waitFor([&] { return !rig.router.alertPlaying(); }, 3000), "the clip ends");
 
   check(rig.router.play(say("Long"), sound::Group::App, "talker", detail) == sound::PlayResult::Ok &&
             rig.router.appSoundPlaying() && speaking(),
         "a script speaks too");
-  rig.sink->setVoiceOwned(true);
+  posix::Hold channel = rig.sink->claimVoiceChannel();
   check(waitFor([&] { return voice->cancels == 3; }, 2000), "Assist taking the speaker cancels it");
   detail.clear();
   check(rig.router.play(say("Hello"), sound::Group::Alert, "", detail) == sound::PlayResult::NoSink &&
             detail.message == "speaker unavailable", "and no speech starts while Assist has the speaker");
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
 }
 
 void test_sink_tone_mp3_and_router() {
@@ -812,6 +833,7 @@ void test_sink_tone_mp3_and_router() {
             !rig.sink->playMelodyFile("../x", sound::Group::Alert), "melody files by name only");
   check(waitFor([&] { return !rig.sink->isPlaying(); }, 3000), "melody file ends");
 
+  rig.helper.speed = 1;
   const uint32_t opened = rig.helper.get(&FakeHelper::opens);
   const sound::Choices longMelody = one(sound::Kind::Rtttl, "long:d=1,o=5,b=60:c,d,e,f,g,a,b");
   check(rig.router.play(longMelody, sound::Group::Alert, "", detail) == sound::PlayResult::Ok,
@@ -822,13 +844,15 @@ void test_sink_tone_mp3_and_router() {
         "a script's MP3 meanwhile is accepted");
   check(rig.sink->isPlaying() && !rig.sink->oneShotPlaying(), "but never cuts the alert off");
 
+  const std::size_t sent = rig.helper.get(&FakeHelper::types).size();
   rig.router.stop(sound::Stop::Alert);
   check(rig.router.play(longMelody, sound::Group::App, "player", detail) == sound::PlayResult::Ok &&
             rig.sink->isPlaying(),
         "once the alert is stopped, a script's long melody plays");
+  check(waitFor([&] { return playsAfterVolume(rig.helper.get(&FakeHelper::types), sent); }, 2000),
+        "the script's melody reaches the helper at its own level");
   const uint32_t stops = rig.helper.get(&FakeHelper::stops);
   const uint32_t opens = rig.helper.get(&FakeHelper::opens);
-  rig.helper.speed = 1;
   check(rig.router.play(file("sine"), sound::Group::App, "player", detail) == sound::PlayResult::Ok,
         "and the script's MP3 replaces its melody");
   check(rig.sink->oneShotPlaying() && !rig.sink->isPlaying(), "only the MP3 counts as playing");
@@ -999,6 +1023,27 @@ void test_mix_source() {
 
   MixSource again(cache);
   check(again.addEffect(fx) && drainSource(again) == single, "the cached effect sounds the same");
+
+  EffectCache forgetting;
+  check(forgetting.keep(0, false) == -1, "without clips no time needs to pass");
+  auto clip = std::make_shared<Clip>();
+  clip->samples.assign(100, 1);
+  forgetting.put(fx, clip);
+  check(forgetting.keep(1000, true) == -1 && forgetting.find(fx), "a playing mixer keeps the clips");
+  check(forgetting.keep(1000, false) == EffectCache::kQuietMs, "the quiet counts from the last sound");
+  check(forgetting.keep(1000 + EffectCache::kQuietMs - 1, false) == 1 && forgetting.find(fx), "and they stay until it is over");
+  check(forgetting.keep(5000, true) == -1 && forgetting.keep(5000 + EffectCache::kQuietMs - 1, false) == 1 && forgetting.find(fx),
+        "a sound starts it again");
+  check(forgetting.keep(5000 + EffectCache::kQuietMs, false) == -1 && !forgetting.find(fx) && forgetting.bytes() == 0,
+        "after it they are gone");
+  check(forgetting.keep(5000 + 2 * EffectCache::kQuietMs, false) == -1, "and nothing is left to wait for");
+  check(clip.use_count() == 1, "the cache holds no reference");
+  MixSource redecoded(forgetting);
+  check(redecoded.addEffect(fx) && drainSource(redecoded) == single, "the effect then decodes again, sounding the same");
+  check(forgetting.find(fx) != nullptr, "and is kept again");
+  check(forgetting.keep(6 * EffectCache::kQuietMs, true) == -1 &&
+            forgetting.keep(6 * EffectCache::kQuietMs, false) == EffectCache::kQuietMs,
+        "the quiet counts anew after it");
 
   MixSource two(cache);
   check(two.addEffect(fx) && two.addEffect(fx) && two.voices() == 2, "two effects at once");
@@ -1337,14 +1382,14 @@ void test_sink_songs() {
   check(waitFor([&] { double b; return !rig.sink->songBeat(monotonicMs(), b); }, 1000),
         "and its beat is gone");
 
-  rig.sink->setVoiceOwned(true);
+  posix::Hold channel = rig.sink->claimVoiceChannel();
   check(rig.router.playEffect(one(sound::Kind::Song, kTickFx), "", detail) == sound::PlayResult::NoSink &&
             detail.message == "speaker unavailable",
         "no synth effect while the voice assistant holds the speaker");
   check(rig.router.play(one(sound::Kind::Song, kTickFx), sound::Group::Alert, "", detail) ==
             sound::PlayResult::NoSink,
         "and no song once");
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
 }
 
 // music.pitch() from playback: a held A4 is heard as 440 Hz once the speaker plays it.
@@ -1840,7 +1885,7 @@ void test_voice_keeps_the_station() {
                                          rig.helper.get(&FakeHelper::received) > 0; }, 5000),
         "the station plays");
   const uint32_t stops = rig.helper.get(&FakeHelper::stops);
-  rig.sink->setVoiceOwned(true);
+  posix::Hold channel = rig.sink->claimVoiceChannel();
   check(waitFor([&] { return rig.sink->voiceQuiet(); }, 2000) && rig.helper.get(&FakeHelper::stops) > stops,
         "the voice takes the speaker from the station");
   const int streams = server.streams;
@@ -1848,7 +1893,7 @@ void test_voice_keeps_the_station() {
   rig.tick();
   check(server.streams == streams && rig.engine.state().runtime().radioPlaying,
         "the station waits meanwhile and still counts as playing");
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
   check(waitFor([&] { return server.streams > streams && rig.helper.get(&FakeHelper::channels) == 2; }, 8000),
         "and plays again once the voice lets go");
   rig.router.stop(sound::Stop::Radio);
@@ -1890,7 +1935,7 @@ void test_the_voice_holds_the_music() {
   check(rig.router.play(file("fx", true), sound::Group::App, "player", detail) == sound::PlayResult::Ok &&
             waitFor([&] { return rig.helper.get(&FakeHelper::received) > 0; }, 2000),
         "a script's music plays");
-  rig.sink->setVoiceOwned(true);
+  posix::Hold channel = rig.sink->claimVoiceChannel();
   check(waitFor([&] { return rig.sink->voiceQuiet(); }, 2000), "the voice silences it");
   rig.tick();
   check(rig.sink->loopPlaying() && rig.router.appStatus().playing, "and it still counts as playing");
@@ -1904,7 +1949,7 @@ void test_the_voice_holds_the_music() {
   check(waitFor([&] { return rig.sink->voiceQuiet(); }, 2000) && rig.sink->loopPlaying(),
         "alone, the music still waiting");
   const uint32_t opens = rig.helper.get(&FakeHelper::opens);
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
   check(waitFor([&] { return rig.helper.get(&FakeHelper::opens) > opens &&
                              rig.helper.get(&FakeHelper::received) > 0; }, 2000),
         "the music plays again once the voice lets go");
@@ -1919,25 +1964,62 @@ void test_music_asked_during_the_voice() {
   check(rig.router.play(file("fx", true), sound::Group::App, "player", detail) == sound::PlayResult::Ok &&
             waitFor([&] { return rig.helper.get(&FakeHelper::received) > 0; }, 2000),
         "a script's music plays");
-  rig.sink->setVoiceOwned(true);
+  posix::Hold channel = rig.sink->claimVoiceChannel();
   check(waitFor([&] { return rig.sink->voiceQuiet(); }, 2000), "the voice silences the music");
   check(rig.router.play(one(sound::Kind::Song, kHeldSong, true), sound::Group::App, "player", detail) ==
             sound::PlayResult::Ok,
         "a new song meanwhile is accepted");
   std::this_thread::sleep_for(std::chrono::milliseconds(200));
   check(rig.sink->voiceQuiet(), "and waits");
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
   check(waitFor([&] { double beat; return rig.sink->songBeat(monotonicMs(), beat); }, 2000),
         "the song plays once the voice lets go");
 
-  rig.sink->setVoiceOwned(true);
+  channel = rig.sink->claimVoiceChannel();
   check(waitFor([&] { return rig.sink->voiceQuiet(); }, 2000), "the voice silences it again");
   rig.router.stop(sound::Stop::ScriptMusic, "player");
   check(!rig.sink->loopPlaying(), "the script stops its music meanwhile");
   const uint32_t opens = rig.helper.get(&FakeHelper::opens);
-  rig.sink->setVoiceOwned(false);
+  channel.reset();
   std::this_thread::sleep_for(std::chrono::milliseconds(300));
   check(rig.helper.get(&FakeHelper::opens) == opens, "and it stays off");
+}
+
+void test_held_music_lets_speech_play() {
+  IcyServer server;
+  Rig rig(true, std::make_shared<SteadyVoice>());
+  DispatchDetail detail;
+  const std::string url = "http://127.0.0.1:" + std::to_string(server.port) + "/stream";
+  check(rig.router.playStream(url, "Test", detail) == DispatchResult::Ok, "station accepted");
+  check(waitFor([&] { return rig.helper.get(&FakeHelper::channels) == 2 &&
+                             rig.helper.get(&FakeHelper::received) > 0; }, 5000), "the station plays");
+  const uint32_t stops = rig.helper.get(&FakeHelper::stops);
+  posix::Hold first = rig.sink->holdMusic();
+  check(static_cast<bool>(first), "a hold");
+  check(waitFor([&] { return rig.helper.get(&FakeHelper::stops) > stops; }, 2000), "holding the music stops it");
+  const int streams = server.streams;
+  const uint32_t opens = rig.helper.get(&FakeHelper::opens);
+  check(rig.router.play(one(sound::Kind::Speech, "Hello"), sound::Group::Alert, "", detail) == sound::PlayResult::Ok,
+        "speech is accepted meanwhile");
+  check(waitFor([&] { return rig.helper.get(&FakeHelper::opens) > opens && heard(rig.helper, -1000); }, 2000),
+        "and heard");
+  check(waitFor([&] { return !rig.router.alertPlaying(); }, 3000), "until it ends");
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  rig.tick();
+  check(server.streams == streams && rig.engine.state().runtime().radioPlaying,
+        "the station waits meanwhile and still counts as playing");
+  posix::Hold second = rig.sink->holdMusic();
+  first = posix::Hold();
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  rig.tick();
+  check(!first && second && server.streams == streams,
+        "a second holder keeps the music waiting after the first lets go");
+  posix::Hold moved = std::move(second);
+  check(!second && moved && server.streams == streams, "a moved hold still holds");
+  moved = posix::Hold();
+  check(waitFor([&] { return server.streams > streams && rig.helper.get(&FakeHelper::channels) == 2; }, 8000),
+        "and plays again once the last holder lets go");
+  rig.router.stop(sound::Stop::Radio);
 }
 
 // The boot sound and the voice's answer are alerts: no app sound cuts them off.
@@ -2064,6 +2146,7 @@ int main() {
   test_a_repeating_alert_keeps_the_station_away();
   test_the_voice_holds_the_music();
   test_music_asked_during_the_voice();
+  test_held_music_lets_speech_play();
   test_a_system_sound_is_an_alert();
   test_a_url_one_shot_plays();
   test_sink_station_without_helper();

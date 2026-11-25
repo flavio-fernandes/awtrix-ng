@@ -3,6 +3,7 @@ function cfgDef(f,builtin){
   const d={w:f.type==='bool'?'toggle':f.type,l:l||f.label||f.key,
     h:l?h:f.help||'',
     min:f.min,max:f.max,step:f.step,unit:f.unit,dflt:f.default,
+    ph:typeof f.hint==='string'?f.hint:'',
     nullable:!!f.nullable,numericColor:!!builtin||!!f.nullable,linkLabel:true};
   if(f.type==='select')d.opt=(f.options||[]).map(o=>{
     const x=opt&&opt.find(x=>String(x[0])===String(o));
@@ -93,7 +94,7 @@ async function fillConfigPanel(name,box,saveError,builtin){
 }
 async function viewApps(view){
   //linux:begin
-  loadOauthApps();
+  loadScriptSections();
   //linux:end
   let loop=[],background=[],ondemand=[],disabled=[],modules=[],dragFrom=null,saving=Promise.resolve();
   const panels=new Map(),infos=new Map();
@@ -142,7 +143,7 @@ async function viewApps(view){
   function cfgPanel(a){
     const key=a.origin+':'+a.name;
     //linux:begin
-    if(a.origin!=='builtin'&&S.oauthApps&&S.oauthApps.has(a.name))a={...a,config:true};
+    if(a.origin!=='builtin'&&hasScriptSection(a.name))a={...a,config:true};
     //linux:end
     if(!a.config||panelTaken.has(key))return[null,null];
     panelTaken.add(key);

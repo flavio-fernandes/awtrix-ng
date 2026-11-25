@@ -55,12 +55,18 @@
 #include "platform/linux/script/CryptoScripting.h"
 #include "platform/linux/script/ExtensionHost.h"
 #include "platform/linux/script/KnobScripting.h"
+#include "platform/linux/script/PerScriptStore.h"
 #include "platform/linux/script/TcpScripting.h"
+#include "platform/linux/secrets/SecretApi.h"
+#include "platform/linux/secrets/SecretScripting.h"
+#include "platform/linux/secrets/SecretService.h"
 #include "platform/linux/tls/BrokerTrust.h"
 #include "platform/linux/tls/BrokerTrustApi.h"
 #include "platform/tc002/audio/AudioScripting.h"
-#include "platform/tc002/runtime/MicrophoneInput.h"
 #include "platform/tc002/runtime/SupervisedRuntime.h"
+#include "platform/tc002/runtime/Tc002Activation.h"
+#include "platform/tc002/runtime/Tc002ActivationApi.h"
+#include "platform/tc002/runtime/Tc002ActivationHttp.h"
 #include "platform/tc002/runtime/SupervisorLink.h"
 #include "platform/tc002/runtime/Tc002Board.h"
 #include "platform/tc002/runtime/Tc002BootIntro.h"
@@ -71,8 +77,8 @@
 #include "platform/tc002/runtime/Tc002Speaker.h"
 #include "platform/tc002/runtime/Tc002Target.h"
 #include "platform/tc002/runtime/Tc002Update.h"
-#include "platform/tc002/voice/KnobGesture.h"
-#include "platform/tc002/voice/VoiceRuntime.h"
+#include "platform/tc002/speech/VoicePacks.h"
+#include "platform/tc002/voice/VoiceStack.h"
 #include "system/MonotonicClock.h"
 #include "transport/mqtt/MqttService.h"
 #include "transport/net/DiscoveryService.h"
@@ -133,6 +139,7 @@ class LinuxRuntime {
   void composeScriptServices();
   void composeBluetooth();
   void composeExtensions();
+  void composeAssistant();
   void composePlatformRoutes();
   void startScripts();
   int startServices();
@@ -151,12 +158,14 @@ class LinuxRuntime {
 
   void applyConfig();
   bool voiceAllowedNow() const;
-  bool startVoice(int64_t now);
-  float audioPitch(int64_t now);
+  float audioPitch(int64_t now, bool onScreen);
+  net::FillRequest fillSecrets();
   CoreEngine& engine() { return app_->engine(); }
   LinuxBoard& board() { return *selectedBoard_; }
 
   static inline volatile std::sig_atomic_t stopping_ = 0;
+
+  using SavedScripts = ScriptStore<host::ScriptFiles>;
 
   LinuxOptions o_;
   Tc002Target tc002Target_;
@@ -175,6 +184,7 @@ class LinuxRuntime {
   std::unique_ptr<tls::BrokerTrust> brokerTrust_;
   std::unique_ptr<tls::BrokerTrustApi> brokerTrustApi_;
   std::unique_ptr<LinuxBoard> selectedBoard_;
+  inline static LinuxBoard* boardKeptForUpdate_ = nullptr;
   Tc002Board* tc002_ = nullptr;
   Tc002Input input_;
   ScreenDisplay display_;
@@ -194,6 +204,7 @@ class LinuxRuntime {
   layout::Resources layoutResources_;
   std::optional<layout::LayoutPayload> layoutPayload_;
   std::unique_ptr<Tc002Speaker> speaker_;
+  std::optional<speech::VoicePacks> voicePacks_;
   std::optional<SupervisedRuntime> supervision_;
   std::optional<Tc002QuickSettings> quickSettings_;
   std::optional<LinuxDeviceFacts> deviceFacts_;
@@ -209,25 +220,27 @@ class LinuxRuntime {
   MqttService mqtt_;
   std::unique_ptr<net::IHostResolver> resolver_;
   std::optional<PlatformDescriptor> platform_;
-  ScriptStore<host::ScriptFiles> store_;
+  SavedScripts store_;
   ScriptIcon scriptIcon_;
   ScriptMqttBridge scriptMqtt_;
   script::ScriptServices scriptServices_;
-  std::optional<tc002::MicrophoneInput> microphone_;
-  tc002::voice::KnobGesture knobGesture_;
-  std::unique_ptr<tc002::voice::VoiceRuntime> voice_;
   oauth::HttplibTransport oauthTransport_;
   std::optional<oauth::Vault> oauthVault_;
   std::optional<oauth::Service> oauthService_;
   std::optional<oauth::OAuthScripting> oauthScripting_;
   std::optional<oauth::Api> oauthApi_;
+  std::optional<secrets::Service> secrets_;
+  std::optional<secrets::SecretScripting> secretScripting_;
+  std::optional<secrets::Api> secretApi_;
+  script::PerScriptStores scriptStores_;
+  std::optional<tc002::voice::VoiceStack> voice_;
   std::optional<audio::AnalysisRouter> analysis_;
   Extensions extensions_;
   script::ScriptSlots scriptSlots_;
   script::ScriptHost* scripts_ = nullptr;
   std::unique_ptr<script::ExtensionHost> scriptExtensions_;
   // Stopped before its callback target is destroyed, also while an exception unwinds.
-  LinuxScriptHttp scriptHttp_;
+  LinuxScriptHttp scriptHttp_{fillSecrets()};
   // Declared after the scripts, so its worker stops before the host its events go to.
   std::unique_ptr<ble::BleService> bleService_;
   // Declared after the Bluetooth service it hands its requests to, and after the fetcher it asks.
@@ -235,6 +248,10 @@ class LinuxRuntime {
   std::unique_ptr<iphone::IphoneBridge> iphoneBridge_;
   HostButtonInput buttons_;
   std::optional<LinuxButtonWebhook> webhook_;
+  // Declared after the transport its thread posts with.
+  Tc002ActivationHttp activationHttp_;
+  std::optional<Tc002Activation> activation_;
+  std::optional<Tc002ActivationApi> activationApi_;
   std::optional<Tc002KnobRouter> knobRouter_;
   std::unique_ptr<BootSoundClock> bootSoundClock_;
   std::unique_ptr<Tc002BootIntro> intro_;

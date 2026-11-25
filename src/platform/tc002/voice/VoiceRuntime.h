@@ -1,23 +1,20 @@
 #pragma once
-#include "core/render/Font.h"
-#include "platform/tc002/runtime/Tc002Speaker.h"
-#include "platform/tc002/runtime/MicrophoneInput.h"
-#include "platform/tc002/voice/AssistSession.h"
+#include <string>
+#include <string_view>
+
 #include "platform/linux/net/FileDownload.h"
+#include "platform/posix/Hold.h"
+#include "platform/tc002/voice/AssistSession.h"
+#include "platform/tc002/voice/AssistantRouter.h"
 #include "platform/tc002/voice/VoiceOverlay.h"
-namespace httplib {
-struct Request;
-struct Response;
-}  // namespace httplib
+#include "platform/tc002/voice/VoiceSpeaker.h"
 namespace awtrix::tc002::voice {
-class VoiceRuntime {
+class VoiceRuntime : public AssistantRouter::Voice {
  public:
-  using Send = std::function<bool(std::string)>;
-  VoiceRuntime(std::string directory, Tc002Speaker& speaker,
-               MicrophoneInput& microphone, Send send);
-  ~VoiceRuntime();
+  VoiceRuntime(std::string directory, VoiceSpeaker& speaker, MicrophonePort microphone);
+  ~VoiceRuntime() override;
   void tick(int64_t now, bool allowed);
-  bool begin(int64_t now);
+  bool begin(int64_t now) override;
   void endInput(int64_t now);
   void receive(const StreamEvent& event, int64_t now);
   void cancel();
@@ -25,21 +22,36 @@ class VoiceRuntime {
     cancel();
     return config_.erase();
   }
+  bool off() const override { return config_.get().assistant == kAssistantOff; }
+  bool homeAssistant() const override { return config_.get().assistant == kHomeAssistant; }
+  const std::string& assistantApp() const override { return config_.assistantApp(); }
   // Off means the knob's long press does nothing: no session is started.
-  bool ready() const {
-    return config_.get().enabled && !pendingStart_ && !errorFeedback_ && session_.ready();
+  bool ready() const override {
+    return homeAssistant() && !pendingStart_ && !errorFeedback_ && session_.ready();
   }
-  bool busy() const {
+  bool wakeWord() const override { return config_.get().wakeWord; }
+  wake::WakeSensitivity wakeSensitivity() const override { return config_.get().wakeSensitivity; }
+  bool busy() const override {
     return pendingStart_ || errorFeedback_ || session_.busy();
   }
-  bool draw(Canvas& canvas, const GfxFont& font, int64_t now);
-  bool handle(const httplib::Request& request, httplib::Response& response);
+  bool starting() const override { return pendingStart_ || session_.starting(); }
+  void draw(Canvas& canvas, int64_t now);
+  const ConfigStore& config() const { return config_; }
+  const AssistSession& session() const { return session_; }
+  bool loaded() const { return loaded_; }
+  bool updateConfig(std::string_view json, ConfigStore::Rejection& rejection);
 
  private:
+  void connectIfDue(const Config& config, int64_t now);
+  void pumpSocket(int64_t now);
+  void startPending(int64_t now);
+  void pollDownload(int64_t now);
+  void finishPlayback(int64_t now);
+  void releaseVoiceChannel(int64_t now);
+  void removePlaybackFile();
   void stopSpeaker();
   ConfigStore config_;
-  Tc002Speaker& speaker_;
-  MicrophoneInput& microphone_;
+  VoiceSpeaker& speaker_;
   WebSocket socket_;
   net::FileDownload download_;
   AssistSession session_;
@@ -49,7 +61,8 @@ class VoiceRuntime {
   int64_t startAt_ = 0;
   int64_t feedbackUntil_ = 0;
   bool errorFeedback_ = false;
-  bool loaded_ = false, playing_ = false, owned_ = false, pendingStart_ = false;
+  bool loaded_ = false, playing_ = false, pendingStart_ = false;
   std::string playbackPath_;
+  posix::Hold voiceChannel_;
 };
 }  // namespace awtrix::tc002::voice

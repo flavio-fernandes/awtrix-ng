@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cctype>
 
+#include "core/api/ApiRouter.h"
 #include "core/api/JsonReader.h"
 #include "core/api/JsonWriter.h"
 #include "core/net/Url.h"
@@ -14,6 +15,13 @@
 
 namespace awtrix::tc002::voice {
 namespace {
+bool namesApp(const std::string& assistant) {
+  return assistant.compare(0, kAssistantAppPrefix.size(), kAssistantAppPrefix) == 0;
+}
+bool validAssistant(const std::string& assistant) {
+  return assistant == kAssistantOff || assistant == kHomeAssistant ||
+         (namesApp(assistant) && api::isValidAppName(assistant.substr(kAssistantAppPrefix.size())));
+}
 bool safe(std::string_view text) {
   return std::all_of(text.begin(), text.end(), [](unsigned char c) {
     return c > 32 && c < 127 && c != '\\';
@@ -32,11 +40,26 @@ bool boolField(const api::JsonReader& r, const char* name, bool& value) {
   const auto member = api::memberValue(r, name);
   return !api::present(member) || member.asBool(value);
 }
+bool enabledField(const api::JsonReader& r, std::string& assistant) {
+  const auto member = api::memberValue(r, "enabled");
+  bool enabled = false;
+  if (!api::present(member)) return true;
+  if (!member.asBool(enabled)) return false;
+  assistant = enabled ? kHomeAssistant : kAssistantOff;
+  return true;
+}
+bool switchedOff(std::string_view json) {
+  bool enabled = true;
+  return api::memberValue(api::JsonReader(json), "enabled").asBool(enabled) && !enabled;
+}
 std::string serialize(const Config& c, bool secret) {
   std::string out;
   api::JsonWriter w(out);
-  w.beginObject()
-      .member("enabled", c.enabled)
+  w.beginObject();
+  if (!secret) w.member("enabled", c.assistant == kHomeAssistant);
+  w.member("wakeWord", c.wakeWord)
+      .member("wakeSensitivity", wake::wakeSensitivityName(c.wakeSensitivity))
+      .member("assistant", c.assistant)
       .member("url", c.url)
       .member("pipeline", c.pipeline)
       .member("device", c.device)
@@ -50,7 +73,12 @@ const char* applyConfig(std::string_view json, Config& c) {
   if (json.size() > 8192 || !api::isWellFormed(json)) return "";
   api::JsonReader r(json);
   if (!r.isObject()) return "";
-  if (!boolField(r, "enabled", c.enabled)) return "enabled";
+  if (!enabledField(r, c.assistant)) return "enabled";
+  if (!boolField(r, "wakeWord", c.wakeWord)) return "wakeWord";
+  std::string sensitivity{wake::wakeSensitivityName(c.wakeSensitivity)};
+  if (!stringField(r, "wakeSensitivity", sensitivity, 8) || !wake::parseWakeSensitivity(sensitivity, c.wakeSensitivity))
+    return "wakeSensitivity";
+  if (!stringField(r, "assistant", c.assistant, 68) || !validAssistant(c.assistant)) return "assistant";
   if (!stringField(r, "url", c.url, 512)) return "url";
   if (!stringField(r, "token", c.token, 4096)) return "token";
   if (!stringField(r, "pipeline", c.pipeline, 128)) return "pipeline";
@@ -66,7 +94,6 @@ const char* applyConfig(std::string_view json, Config& c) {
   if (!c.url.empty() && !parseOrigin(c.url, endpoint)) return "url";
   if (!c.token.empty() && !safe(c.token)) return "token";
   if (!c.pipeline.empty() && !safe(c.pipeline)) return "pipeline";
-  if (c.enabled && (c.url.empty() || c.token.empty())) return "enabled";
   return nullptr;
 }
 }  // namespace
@@ -106,8 +133,19 @@ bool ttsTarget(const Config& config, std::string_view url,
   target.assign(url);
   return true;
 }
+bool onlyWakeChanged(const Config& before, const Config& after) {
+  Config others = after;
+  others.wakeWord = before.wakeWord;
+  others.wakeSensitivity = before.wakeSensitivity;
+  const std::string saved = serialize(before, true);
+  return saved == serialize(others, true) && saved != serialize(after, true);
+}
 ConfigStore::ConfigStore(std::string directory)
     : directory_(std::move(directory)) {}
+void ConfigStore::replace(Config next) {
+  config_ = std::move(next);
+  assistantApp_ = namesApp(config_.assistant) ? config_.assistant.substr(kAssistantAppPrefix.size()) : std::string();
+}
 bool ConfigStore::load() {
   if (!posix::ensurePrivateDirectory(directory_)) return false;
   const std::string path = directory_ + "/voice.json";
@@ -119,7 +157,8 @@ bool ConfigStore::load() {
   Config next;
   if (!posix::readText(path, json, 8192) || applyConfig(json, next))
     return false;
-  config_ = std::move(next);
+  if (next.assistant == kHomeAssistant && switchedOff(json)) next.assistant = kAssistantOff;
+  replace(std::move(next));
   return true;
 }
 bool ConfigStore::update(std::string_view json, Rejection& rejection) {
@@ -129,8 +168,6 @@ bool ConfigStore::update(std::string_view json, Rejection& rejection) {
     rejection.message = *field == '\0' ? "expected an object"
                         : std::string_view(field) == "url"
                             ? "address only, no path"
-                        : std::string_view(field) == "enabled"
-                            ? "needs address and token"
                             : "invalid value";
     return false;
   }
@@ -152,7 +189,7 @@ bool ConfigStore::update(std::string_view json, Rejection& rejection) {
     rejection.message = "could not save";
     return false;
   }
-  config_ = std::move(next);
+  replace(std::move(next));
   return true;
 }
 std::string ConfigStore::publicJson() const {
@@ -162,7 +199,7 @@ bool ConfigStore::erase() {
   if (!posix::ensurePrivateDirectory(directory_)) return false;
   if (::unlink((directory_ + "/voice.json").c_str()) != 0 && errno != ENOENT)
     return false;
-  config_ = {};
+  replace({});
   return posix::fsyncDirectory(directory_);
 }
 }  // namespace awtrix::tc002::voice

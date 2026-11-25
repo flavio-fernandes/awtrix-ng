@@ -2,15 +2,20 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace httplib {
 class Client;
 class Result;
-struct Request;
+}
+
+namespace awtrix::posix {
+class MappedFile;
 }
 
 namespace awtrix::net {
@@ -18,6 +23,7 @@ namespace awtrix::net {
 // "http(s)://host[:port]" with the scheme in lower case, and the path with its query; false for
 // anything else.
 bool splitUrl(const std::string& url, std::string& origin, std::string& target);
+bool validUrl(const std::string& url);
 
 struct ClientLimits {
   // From connecting to the last byte, redirects included; zero permits an endless stream.
@@ -27,39 +33,90 @@ struct ClientLimits {
   int ioTimeoutSec = 5;
 };
 
-// The timeouts, certificate checks and redirect policy every outgoing request of the runtime
-// shares.
+// The timeouts, certificate checks, redirect policy and User-Agent every outgoing request of the
+// runtime shares. httplib adds its own User-Agent only to requests without a content receiver;
+// a User-Agent the caller sets wins.
 void configure(httplib::Client& client, const ClientLimits& limits);
-
-// httplib starts the clock of its total timeout only in its own Get(), Post() and so on; a
-// request handed to send() needs it started here.
-void startClock(httplib::Request& request);
 
 using BodyReceiver = std::function<bool(const char*, std::size_t)>;
 using RequestHeaders = std::vector<std::pair<std::string, std::string>>;
 
-// Any method, with a total timeout and at most 1 MiB delivered to the receiver.
+constexpr std::string_view kPlaceholder = "{secret:";
+constexpr std::size_t kMaxFillGrowth = 4096;
+
+struct RequestBody {
+  RequestBody() = default;
+  RequestBody(std::string text) : head(std::move(text)) {}
+  RequestBody(const char* text) : head(text) {}
+  RequestBody(std::string before, std::shared_ptr<const posix::MappedFile> mapped, std::string after)
+      : head(std::move(before)), file(std::move(mapped)), tail(std::move(after)) {}
+
+  bool fillable() const { return !file && head.find(kPlaceholder) != std::string::npos; }
+
+  std::string head;
+  std::shared_ptr<const posix::MappedFile> file;
+  std::string tail;
+};
+
+enum class RequestFill { Unchanged, Filled, Refused };
+using FillRequest = std::function<RequestFill(const std::string& owner, std::string& url, RequestHeaders& headers,
+                                              RequestBody& body)>;
+
+constexpr std::size_t kMaxAnswerBytes = 1024 * 1024;
+
 httplib::Result send(httplib::Client& client, const std::string& method,
-                     const std::string& path, const std::string& body,
+                     const std::string& path, RequestBody body,
                      const RequestHeaders& headers, const BodyReceiver& receive);
 
 struct BodyPolicy {
   std::size_t maxBytes;
-  std::function<bool()> active;
+  std::function<bool(int status, const std::string& contentType)> accept;
   // Checks the announced size (when present) and then each incoming chunk. This checks
   // available space; it must not reserve it twice.
   std::function<bool(std::size_t)> room;
 };
-struct ReceivedBody {
+class RoomWatch {
+ public:
+  explicit RoomWatch(const std::function<bool(std::size_t)>& room) : room_(room) {}
+
+  bool fits(std::size_t more);
+  bool write(int fd, const char* bytes, std::size_t count);
+  bool noRoom() const { return noRoom_; }
+
+ private:
+  const std::function<bool(std::size_t)>& room_;
+  bool noRoom_ = false;
+};
+
+struct ResponseState {
   int status = 0;
-  std::size_t size = 0;
+  std::string contentType;
+  std::size_t receivedBytes = 0;
   bool tooLarge = false;
 };
+
+httplib::Result exchange(httplib::Client& client, const std::string& method, const std::string& path,
+                         RequestBody body, const RequestHeaders& headers, const BodyPolicy& policy,
+                         ResponseState& state, const BodyReceiver& receive);
+
+struct AnswerFilter {
+  std::string find;
+  std::size_t keep = 0;
+  std::size_t cap = 0;
+};
+struct FilteredAnswer {
+  int status = 0;
+  bool ok = false;
+  std::string body;
+};
+
+FilteredAnswer sendFiltered(httplib::Client& client, const std::string& method, const std::string& path,
+                            RequestBody body, const RequestHeaders& headers, const AnswerFilter& filter);
 
 // Accepts only status 200; enforces both Content-Length and the actual received size.
 // Client configuration, interruption and mapping failures to public errors remain with callers.
 httplib::Result receive200(httplib::Client& client, const std::string& path,
-                           const BodyPolicy& policy, ReceivedBody& state,
+                           const BodyPolicy& policy, ResponseState& state,
                            const BodyReceiver& receive);
 
 // Ends a request from another thread wherever it is. The socket in use is shut down through a
@@ -87,6 +144,22 @@ class SocketInterrupt {
   std::mutex mutex_;
   int socket_ = -1;
   bool interrupted_ = false;
+};
+
+class RequestRunner {
+ public:
+  using Task = std::function<void(httplib::Client& client, const std::string& target)>;
+
+  explicit RequestRunner(FillRequest fill) : fill_(std::move(fill)) {}
+
+  bool run(const std::string& owner, std::string url, RequestHeaders& headers, RequestBody& body, ClientLimits limits,
+           const Task& task);
+  void interrupt() { interrupt_.interrupt(); }
+  void rearm() { interrupt_.rearm(); }
+
+ private:
+  const FillRequest fill_;
+  SocketInterrupt interrupt_;
 };
 
 }

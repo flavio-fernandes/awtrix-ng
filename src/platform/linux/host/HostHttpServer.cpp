@@ -8,6 +8,7 @@
 #include "platform/linux/host/HostHttpInternal.h"
 #include "platform/linux/host/HostHttpBody.h"
 #include "platform/linux/host/HttpConnections.h"
+#include "platform/linux/host/OnDemandWorkers.h"
 
 namespace awtrix {
 using namespace host_http;
@@ -17,6 +18,8 @@ namespace {
 // httplib only ends a connection stalled in a read or write at its timeout. Stopping gives an
 // answer under way this long to reach its client, then shuts down every connection still open.
 constexpr auto kAnswerGrace = std::chrono::milliseconds(500);
+// Longer than a browser's pause between two polls, so a page in use keeps its threads.
+constexpr auto kWorkerIdle = std::chrono::seconds(30);
 
 bool ownPageRequest(const httplib::Request& req) {
   const api::MethodResolution resolved = api::resolveHttpMethod(
@@ -80,6 +83,7 @@ bool HostHttpServer::begin(uint16_t port, CoreEngine& engine, Canvas& screen,
     im->svr = im->options.listenerFactory();
   } else {
     auto listener = std::make_unique<ConnectionTrackingServer>();
+    listener->new_task_queue = [] { return new OnDemandWorkers(1, CPPHTTPLIB_THREAD_POOL_COUNT, kWorkerIdle); };
     im->connections = listener.get();
     im->svr = std::move(listener);
   }
@@ -202,7 +206,10 @@ bool HostHttpServer::begin(uint16_t port, CoreEngine& engine, Canvas& screen,
     logf("host http: cannot bind port %u", static_cast<unsigned>(port));
     return false;
   }
-  im->listener = std::thread([im] { im->svr->listen_after_bind(); });
+  im->listener = std::thread([im] {
+    im->svr->listen_after_bind();
+    im->listenerEnded = true;
+  });
   return true;
 }
 
@@ -224,6 +231,9 @@ void HostHttpServer::stop() {
     impl_->stopping = true;
     impl_->cv.notify_all();
   }
+  // httplib's stop() does nothing until the listener runs, and the join below would then never return.
+  while (impl_->listener.joinable() && !impl_->svr->is_running() && !impl_->listenerEnded)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
   if (impl_->svr) impl_->svr->stop();
   if (impl_->connections) impl_->connections->disconnectAll(kAnswerGrace);
   if (impl_->listener.joinable()) impl_->listener.join();

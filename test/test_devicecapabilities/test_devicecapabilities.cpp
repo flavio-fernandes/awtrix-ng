@@ -43,7 +43,7 @@ static void test_the_table_names_exactly_the_shared_vocabulary() {
   }
   std::vector<std::string> table(DeviceCapabilities::kNames.begin(), DeviceCapabilities::kNames.end());
   const layout::Limits layoutLimits;
-  const LinuxCapabilities platformCaps(true, true, &layoutLimits);
+  const LinuxCapabilities platformCaps(true, true, true, &layoutLimits);
   for (const auto* item = platformCaps.needs(); item->name; ++item) table.emplace_back(item->name);
   std::sort(vocabulary.begin(), vocabulary.end());
   std::sort(table.begin(), table.end());
@@ -56,7 +56,7 @@ static void test_capabilities_json_reports_every_table_entry() {
   sound::Caps audio{true, true, true, true, true, true, true, true, true};
   const PlatformDescriptor platform = everything();
   const layout::Limits layoutLimits;
-  const LinuxCapabilities platformCaps(true, true, &layoutLimits);
+  const LinuxCapabilities platformCaps(true, true, true, &layoutLimits);
   const std::string json = api::capabilitiesJson({}, {}, {}, audio, &platform, nullptr,
       [&](api::JsonWriter& writer) { platformCaps.write(writer); });
   TEST_ASSERT_TRUE(api::isWellFormed(json));
@@ -140,7 +140,7 @@ static void test_url_and_clip_are_reported_but_not_a_need() {
 
 static void test_linux_needs_remain_valid_but_missing_without_the_platform() {
   const layout::Limits layoutLimits;
-  const LinuxCapabilities platformCaps(true, true, &layoutLimits);
+  const LinuxCapabilities platformCaps(true, true, true, &layoutLimits);
   const DeviceCapabilities none = DeviceCapabilities::from({}, nullptr);
   const std::string json = api::capabilitiesJson({}, {}, {}, {});
   for (const auto* item = platformCaps.needs(); item->name; ++item) {
@@ -149,27 +149,31 @@ static void test_linux_needs_remain_valid_but_missing_without_the_platform() {
     TEST_ASSERT_FALSE(none.has(item->name));
     TEST_ASSERT_FALSE(api::present(api::memberValue(api::JsonReader(json), item->name)));
   }
-  for (const char* name : {"voice", "clockFaces", "mqttTls", "bootSound", "enlargeApps"})
+  for (const char* name : {"clockFaces", "mqttTls", "bootSound", "enlargeApps"})
     TEST_ASSERT_FALSE(api::present(api::memberValue(api::JsonReader(json), name)));
 }
 
 static void test_platform_needs_and_advertisement_follow_the_same_flags() {
   for (bool bluetooth : {false, true}) {
     for (bool scripting : {false, true}) {
-      const LinuxCapabilities platformCaps(bluetooth, scripting);
-      const DeviceCapabilities caps = DeviceCapabilities::from({}, nullptr, platformCaps.needs());
-      const std::string json = api::capabilitiesJson({}, {}, {}, {}, nullptr, nullptr,
-          [&](api::JsonWriter& writer) { platformCaps.write(writer); });
-      for (const auto* item = platformCaps.needs(); item->name; ++item) {
-        bool advertised = false;
-        const auto field = api::memberValue(api::JsonReader(json), item->name);
-        if (item->present) TEST_ASSERT_TRUE(field.asBool(advertised));
-        else TEST_ASSERT_FALSE(api::present(field));
-        TEST_ASSERT_EQUAL(item->present, caps.has(item->name));
-        TEST_ASSERT_EQUAL(item->present, advertised);
+      for (bool voice : {false, true}) {
+        const LinuxCapabilities platformCaps(bluetooth, scripting, voice);
+        const DeviceCapabilities caps = DeviceCapabilities::from({}, nullptr, platformCaps.needs());
+        const std::string json = api::capabilitiesJson({}, {}, {}, {}, nullptr, nullptr,
+            [&](api::JsonWriter& writer) { platformCaps.write(writer); });
+        for (const auto* item = platformCaps.needs(); item->name; ++item) {
+          bool advertised = false;
+          const auto field = api::memberValue(api::JsonReader(json), item->name);
+          if (item->present) TEST_ASSERT_TRUE(field.asBool(advertised));
+          else TEST_ASSERT_FALSE(api::present(field));
+          TEST_ASSERT_EQUAL(item->present, caps.has(item->name));
+          TEST_ASSERT_EQUAL(item->present, advertised);
+        }
+        TEST_ASSERT_EQUAL(bluetooth, caps.has("ble"));
+        TEST_ASSERT_EQUAL(scripting, caps.has("gamepad"));
+        TEST_ASSERT_EQUAL(scripting, caps.has("secret"));
+        TEST_ASSERT_EQUAL(voice, caps.has("voice"));
       }
-      TEST_ASSERT_EQUAL(bluetooth, caps.has("ble"));
-      TEST_ASSERT_EQUAL(scripting, caps.has("gamepad"));
     }
   }
 }
@@ -186,6 +190,13 @@ static void test_capability_lists_escape_names() {
   TEST_ASSERT_EQUAL_STRING(name.c_str(), decoded.c_str());
 }
 
+static void test_the_document_holds_no_spare_capacity() {
+  const std::vector<std::string> names(40, "AnEffectWithAFairlyLongName");
+  const std::string json = api::capabilitiesJson(names, names, names, {});
+  TEST_ASSERT_TRUE(json.size() > 1024);
+  TEST_ASSERT_EQUAL_UINT(json.size(), json.capacity());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_linux_needs_remain_valid_but_missing_without_the_platform);
@@ -195,5 +206,6 @@ int main(int, char**) {
   RUN_TEST(test_capabilities_json_reports_every_table_entry);
   RUN_TEST(test_the_table_follows_the_hardware);
   RUN_TEST(test_url_and_clip_are_reported_but_not_a_need);
+  RUN_TEST(test_the_document_holds_no_spare_capacity);
   return UNITY_END();
 }

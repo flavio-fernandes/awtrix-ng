@@ -192,6 +192,12 @@ void applyTimeConfig(const DeviceConfig& cfg, bool force) {
 
 }
 
+// Scripts compile and run on this task, and the Berry parser and json.load recurse per nesting
+// level. Installing a small script with one callback took 7.7 KB of the default 8 KB, and 18 nested
+// parentheses or 120 levels of JSON overflowed it. Measured on a TC001 at 12 KB: 4.1 KB left after
+// that script, 24 parentheses and 180 levels of JSON pass.
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);
+
 void setup() {
   Serial.begin(115200);
   Serial.println();
@@ -304,10 +310,13 @@ void setup() {
   };
   showBootLogo();
   const bool forceAp = holdingSelectAtBoot();
-  if (!forceAp) g_bootAnim.start(*g_board, *g_canvas, awtrixFont(), bootT0);
+  auto startBootAnim = [bootT0] { g_bootAnim.start(*g_board, *g_canvas, awtrixFont(), bootT0); };
   // Network before the services that need it. forceAp skips the join attempt entirely; joining a
   // network from the provisioning portal reboots, so the whole setup below reruns with an IP.
-  g_net.begin(cfg, g_engine->state().runtime().wifi, forceAp);
+  // The animation waits for the join loop: starting the radio blocks interrupts for longer than
+  // the LED driver's refill slack, and frames sent meanwhile arrive shifted.
+  g_net.begin(cfg, g_engine->state().runtime().wifi, forceAp, startBootAnim);
+  if (!forceAp) startBootAnim();
   g_net.setOnJoinedFromAp([] { ESP.restart(); });
   applyTimeConfig(cfg, true);
   g_netWasConnected = g_net.isConnected();
@@ -363,7 +372,7 @@ void setup() {
   bootstrap::configureScriptFiles(g_scriptSvc, g_scriptStore, g_scriptIcon);
 #if defined(AWTRIX_SOC_ESP32S3)
   if (g_radio)
-    g_scriptSvc.audioStats = [](int64_t now, audio::FrameStats& out) {
+    g_scriptSvc.audioStats = [](int64_t now, bool, audio::FrameStats& out) {
       return g_radio->analysis(now, out);
     };
 #endif

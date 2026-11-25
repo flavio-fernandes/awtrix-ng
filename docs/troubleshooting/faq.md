@@ -97,6 +97,15 @@ with the [Scripting guide](../guides/scripting/index.md) and
 [Tutorial 1: Draw something](../tutorials/first-draw.md). Ready-made apps are on the
 [AWTRIX Hub](https://awtrix.de).
 
+<!-- only tc002 -->
+## Can the clock speak another language, or with my own voice?
+
+Yes. The [shop](https://ko-fi.com/blueforcer/shop) has voice packs with Lumi (female) and Milo (male)
+in several languages, and you can [order a pack made from your own voice](https://ko-fi.com/s/082d288a21).
+You can also [build a pack yourself](../developers/tc002/voice-packs.md). You upload a pack in the web UI. See
+[Speech & voices](../guides/speech.md#another-voice-or-language).
+
+<!-- /only -->
 ## How do I change the brightness?
 
 In the web UI, or with `PATCH /api/v1/settings` and `brightness` (0–255).<!-- only esp32 esp32-s3 -->

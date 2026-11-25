@@ -49,7 +49,13 @@ struct MockSink : backup::RestoreSink {
     appLoopJson = json;
     return true;
   }
-  bool applyRadioStations(const std::string& json, std::string&) override {
+  // False as on a clock without a radio (the Pico's PicoRestoreSink): no station list to fill.
+  bool hasStations = true;
+  bool applyRadioStations(const std::string& json, std::string& err) override {
+    if (!hasStations) {
+      err = "no station list on this device";
+      return false;
+    }
     radioJson = json;
     return true;
   }
@@ -212,6 +218,38 @@ void test_settings_backups_migrate_old_bars_and_preserve_separate_new_bars() {
     TEST_ASSERT_EQUAL_HEX32(separate ? 0x405060u : 0x102030u,
                             restored.dateWeekdayBar.activeColor);
   }
+}
+
+// A 1.2.3 backup from an ESP32 carries radio.json. A clock with no radio (the Galactic Unicorn)
+// restores everything else and reports the stations as skipped, with the reason: the restore does
+// not fail, and no station list is invented.
+void test_a_backup_with_stations_restores_on_a_clock_without_a_radio() {
+  MockSink sink;
+  sink.hasStations = false;
+  backup::RestoreApplier applier(sink);
+  entry(applier, "manifest.json", R"({"app":"awtrix-ng","backupFormat":1})");
+  entry(applier, "config/system.json", R"({"hostname":"awtrix-lab","mqttEnabled":true})");
+  entry(applier, "config/settings.json", R"({"brightness":90,"autoTransition":false})");
+  entry(applier, "apploop.json", R"(["clock","weather"])");
+  entry(applier, "radio.json",
+        R"({"stations":[{"name":"Jazz","url":"http://radio.example/jazz.mp3"},{"name":"News","url":"http://radio.example/news.aac"}]})");
+  entry(applier, "MELODIES/ding.txt", "ding:d=4,o=5,b=120:c");
+  applier.onArchiveEnd();
+  const backup::RestoreResult& r = applier.result();
+  TEST_ASSERT_TRUE_MESSAGE(r.ok, r.error.c_str());
+  TEST_ASSERT_EQUAL_INT(0, r.radioStations);
+  TEST_ASSERT_EQUAL_INT(1, r.skipped);
+  TEST_ASSERT_EQUAL_INT(1, static_cast<int>(r.warnings.size()));
+  TEST_ASSERT_EQUAL_STRING("radio stations not applied: no station list on this device",
+                           r.warnings[0].c_str());
+  TEST_ASSERT_TRUE(sink.radioJson.empty());
+  TEST_ASSERT_EQUAL_INT(1, r.system);
+  TEST_ASSERT_EQUAL_INT(1, r.settings);
+  TEST_ASSERT_EQUAL_INT(1, r.appLoop);
+  TEST_ASSERT_EQUAL_INT(1, r.melodies);
+  TEST_ASSERT_TRUE(sink.settingsJson.find("\"brightness\":90") != std::string::npos);
+  TEST_ASSERT_EQUAL_STRING(R"(["clock","weather"])", sink.appLoopJson.c_str());
+  TEST_ASSERT_TRUE(sink.committed);
 }
 
 void test_an_empty_settings_backup_restores_both_default_weekday_bars() {
@@ -524,6 +562,7 @@ int main(int, char**) {
   RUN_TEST(test_routes_every_category);
   RUN_TEST(test_settings_backups_migrate_old_bars_and_preserve_separate_new_bars);
   RUN_TEST(test_an_empty_settings_backup_restores_both_default_weekday_bars);
+  RUN_TEST(test_a_backup_with_stations_restores_on_a_clock_without_a_radio);
   RUN_TEST(test_asset_files_written_to_absolute_paths);
   RUN_TEST(test_rejects_foreign_backup_without_touching_anything);
   RUN_TEST(test_rejects_path_traversal_entry);

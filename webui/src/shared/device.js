@@ -5,7 +5,7 @@ function readAudioCaps(caps){
   S.caps=caps;
   S.scripting=caps.scripting!==false;
   const a=caps.audio||{};
-  S.aud={rtttl:a.rtttl===true,track:a.track===true,mp3:a.mp3===true,radio:a.radio===true};
+  S.aud={rtttl:a.rtttl===true,track:a.track===true,mp3:a.mp3===true,radio:a.radio===true,speech:a.speech===true};
   S.microphone=caps.microphone===true;
   //linux:begin
   S.gamepad=caps.gamepad===true&&caps.ble===true;
@@ -15,7 +15,9 @@ function readAudioCaps(caps){
   S.iphone=caps.ble===true;
   S.mqttTls=caps.mqttTls===true;
   S.oauth=caps.oauth===true;
-  if(S.oauth)loadOauthApps();
+  S.secret=caps.secret===true;
+  S.activation=caps.activation===true;
+  loadScriptSections();
   //linux:end
   if(typeof caps.sensors?.light==='boolean')S.light=caps.sensors.light;
   if(Object.hasOwn(caps,'gpio')){
@@ -40,11 +42,13 @@ function editorMax(){const {width,height}=displayGeometry();return width+'x'+hei
 // The names a script can ask for with @needs, each a boolean in /api/v1/capabilities. The same
 // list is in test/fixtures/script_header_vectors.json; script-header.test.js keeps both equal.
 const CAP_NAMES=['audio.mp3','audio.rtttl','audio.song','audio.speech','audio.track','audio.radio','audio.effect','microphone','sensors.light','ble','gamepad','oauth','crypto','tcp'];
-//linux:begin
-CAP_NAMES.push('layout');
-//linux:end
 const CAP_WORDS={gamepad:'capGamepad',ble:'capBle','audio.effect':'capEffect','audio.song':'capSong',microphone:'capMic','audio.speech':'capSpeech','audio.mp3':'capMp3',
   'audio.radio':'capRadio','audio.rtttl':'capRtttl','audio.track':'capTrack','sensors.light':'capLight',oauth:'capOauth',crypto:'capCrypto',tcp:'capTcp'};
+//linux:begin
+CAP_NAMES.push('layout','voice','secret');
+CAP_WORDS.voice='capVoice';
+CAP_WORDS.secret='capSecret';
+//linux:end
 function capPresent(name){
   let v=S.caps;
   for(const k of String(name).split('.'))v=v&&typeof v==='object'?v[k]:undefined;

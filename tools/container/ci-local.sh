@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s {native|linux|webui|docs|mkdocs|build ENV...|all}...\n' "$0" >&2
+    printf 'Usage: %s {native|linux|linux-sanitize|webui|docs|mkdocs|build ENV...|all}...\n' "$0" >&2
 }
 if [[ ! -f platformio.ini || ! -f requirements-docs.txt ]]; then
     printf 'Run this script from the repository root.\n' >&2
@@ -16,16 +16,16 @@ if (( $# == 0 )); then usage; exit 2; fi
 steps=()
 while (( $# )); do
     case "$1" in
-        native|linux|webui|docs|mkdocs) steps+=("$1"); shift ;;
+        native|linux|linux-sanitize|webui|docs|mkdocs) steps+=("$1"); shift ;;
         all)
-            steps+=(native linux webui docs mkdocs build:awtrix build:awtrix_s3_octal build:awtrix_s3_quad
+            steps+=(native linux linux-sanitize webui docs mkdocs build:awtrix build:awtrix_s3_octal build:awtrix_s3_quad
                    build:galactic_unicorn build:galactic_unicorn_2w)
             shift ;;
         build)
             shift
             count=0
             while (( $# )); do
-                case "$1" in native|linux|webui|docs|mkdocs|build|all) break ;; esac
+                case "$1" in native|linux|linux-sanitize|webui|docs|mkdocs|build|all) break ;; esac
                 if [[ ! "$1" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]] || ! grep -qFx "[env:$1]" platformio.ini; then
                     printf 'Invalid environment: %s\n' "$1" >&2; exit 2
                 fi
@@ -69,6 +69,21 @@ pico_build() {
     pio run -e "$1" && test -s ".pio/build/$1/firmware.uf2" &&
         printf 'UF2 %s (%d bytes)\n' ".pio/build/$1/firmware.uf2" "$(stat -c %s ".pio/build/$1/firmware.uf2")"
 }
+# device-build: the firmware, then the USB install images for every flash size and the OTA image,
+# both of which the release job publishes. Written under .pio/dist, not dist/, so the tree stays clean.
+esp32_build() {
+    local ota
+    case "$1" in
+        awtrix) ota=firmware-awtrix-ng.bin ;;
+        awtrix_s3_octal) ota=firmware-awtrix-ng-s3-octal.bin ;;
+        awtrix_s3_quad) ota=firmware-awtrix-ng-s3-quad.bin ;;
+        *) pio run -e "$1"; return ;;
+    esac
+    pio run -e "$1" &&
+        python scripts/factory_image.py --env "$1" --all -o ".pio/dist/$1" &&
+        cp ".pio/build/$1/firmware.bin" ".pio/dist/$1/$ota" &&
+        ls -l ".pio/dist/$1"
+}
 tag_check() {
     local version
     version=$(tr -d '[:space:]' < version)
@@ -80,11 +95,12 @@ tag_check() {
 # Linux permission/TLS contracts deliberately reject uid 0, like upstream's
 # unprivileged Actions runner. Only CTest output needs write access to the build.
 linux_tests() {
+    local dir=${1:-.pio/linux}
     if (( EUID == 0 )); then
-        chown -R ci:ci .pio/linux &&
-            runuser -u ci -- ctest --test-dir .pio/linux --output-on-failure --no-tests=error
+        chown -R ci:ci "$dir" &&
+            runuser -u ci -- ctest --test-dir "$dir" --output-on-failure --no-tests=error
     else
-        ctest --test-dir .pio/linux --output-on-failure --no-tests=error
+        ctest --test-dir "$dir" --output-on-failure --no-tests=error
     fi
 }
 
@@ -97,6 +113,12 @@ for step in "${steps[@]}"; do
             run_step linux-build cmake --build .pio/linux --parallel 2
             run_step linux linux_tests
             printf 'SKIP linux-service (needs systemd; covered by GitHub CI)\n' ;;
+        linux-sanitize)
+            # The linux-sanitizers job: every host target under ASan and UBSan, in its own tree.
+            run_step linux-sanitize-libraries pio pkg install -e native
+            run_step linux-sanitize-configure cmake -S . -B .pio/linux-sanitize -DCMAKE_BUILD_TYPE=Release -DAWTRIX_SANITIZE=ON -DAWTRIX_REQUIRE_INTEGRATION_SERVICES=ON
+            run_step linux-sanitize-build cmake --build .pio/linux-sanitize --parallel 2
+            run_step linux-sanitize linux_tests .pio/linux-sanitize ;;
         webui)
             run_step webui webui_tests
             run_step flowconv node --test "tools/flowconv/*.test.mjs" ;;
@@ -125,7 +147,7 @@ for step in "${steps[@]}"; do
             run_step docs-image-tools python tools/tc002/browser-image/build.py --work .pio/docs-image-tools --output docs/assets/tc002/image
             run_step mkdocs mkdocs_build ;;
         build:galactic_unicorn*) run_step "$step" pico_build "${step#build:}" ;;
-        build:*) run_step "$step" pio run -e "${step#build:}" ;;
+        build:*) run_step "$step" esp32_build "${step#build:}" ;;
     esac
 done
 exit "$failed"

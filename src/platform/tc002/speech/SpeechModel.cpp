@@ -3,8 +3,10 @@
 #include "platform/tc002/speech/SpeechModel.h"
 
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cmath>
@@ -12,17 +14,17 @@
 #include <map>
 
 #include "platform/posix/Files.h"
+#include "platform/posix/StartThread.h"
 
 namespace awtrix::speech {
 namespace {
 
 constexpr std::size_t kHeaderBytes = 64;
+constexpr std::size_t kChecksumAt = 16, kChecksumBytes = 4;
 constexpr std::size_t kEntryBytes = 64;
 constexpr std::size_t kNameBytes = 40;
 constexpr std::size_t kMaxTensors = 1024;
-constexpr uint32_t kVersion = 1;
-constexpr uint32_t kTokenContract = 1;
-constexpr uint32_t kF32 = 0, kDense = 1, kU32 = 2;
+constexpr uint32_t kF32 = 0, kDense = 1, kU32 = 2, kBytes = 3;
 
 // The hyper-parameters at the start of the config tensor, in this order; the encoder dilations
 // follow them.
@@ -75,6 +77,21 @@ class Tensors {
       return nullptr;
     }
     return &entry;
+  }
+
+  // Rows of a float tensor whose rows the file chooses; 0 when it is missing or not float.
+  std::size_t rows(const std::string& name) const {
+    const auto it = tensors_.find(name);
+    return it == tensors_.end() || it->second.kind != kF32 ? 0 : it->second.rows;
+  }
+
+  // A byte tensor; false with the reason when a required one is missing or of another kind.
+  bool bytes(const std::string& name, bool required, std::string_view& out) {
+    const auto it = tensors_.find(name);
+    if (it == tensors_.end()) return !required || fail("missing tensor " + name);
+    if (it->second.kind != kBytes) return fail("tensor " + name + ": wrong shape");
+    out = {reinterpret_cast<const char*>(file_ + it->second.offset), it->second.bytes};
+    return true;
   }
 
   const uint32_t* config(std::size_t& count) {
@@ -165,6 +182,9 @@ bool checkEntry(const uint8_t* file, std::size_t size, std::size_t header, const
   const uint64_t cells = uint64_t{entry.rows} * entry.cols;
   const uint8_t* data = file + entry.offset;
   switch (entry.kind) {
+    case kBytes:
+      if (entry.rows != 1 || entry.stride != entry.cols || entry.bytes != entry.cols) return fail("wrong size");
+      return true;
     case kF32:
     case kU32:
       if (entry.stride != entry.cols || entry.bytes != cells * 4) return fail("wrong size");
@@ -191,10 +211,31 @@ bool checkEntry(const uint8_t* file, std::size_t size, std::size_t header, const
   }
 }
 
+uint32_t memoryChecksum(const uint8_t* file, std::size_t size) {
+  constexpr uint8_t kZero[kChecksumBytes]{};
+  uint32_t crc = crc32Update(0xffffffffu, file, kChecksumAt);
+  crc = crc32Update(crc, kZero, kChecksumBytes);
+  return ~crc32Update(crc, file + kChecksumAt + kChecksumBytes, size - kChecksumAt - kChecksumBytes);
+}
+
 }
 
 uint32_t crc32(const uint8_t* data, std::size_t size) {
   return ~crc32Update(0xffffffffu, data, size);
+}
+
+bool fileChecksum(int fd, std::size_t size, uint32_t& out) {
+  std::array<uint8_t, 4096> chunk;
+  uint32_t crc = 0xffffffffu;
+  for (std::size_t at = 0; at < size;) {
+    const std::size_t count = std::min(size - at, chunk.size());
+    if (!posix::preadAll(fd, at, chunk.data(), count)) return false;
+    if (!at && count >= kChecksumAt + kChecksumBytes) std::memset(chunk.data() + kChecksumAt, 0, kChecksumBytes);
+    crc = crc32Update(crc, chunk.data(), count);
+    at += count;
+  }
+  out = ~crc;
+  return true;
 }
 
 std::shared_ptr<const SpeechModel> SpeechModel::load(const std::string& path, std::string& error) {
@@ -213,13 +254,22 @@ std::shared_ptr<const SpeechModel> SpeechModel::load(const std::string& path, st
     return nullptr;
   }
   const auto size = static_cast<std::size_t>(info.st_size);
-  std::shared_ptr<SpeechModel> model(new SpeechModel);
-  model->storage_.resize((size + 15) / 16);
-  if (!posix::readAll(fd.get(), model->storage_.data(), size)) {
+  // Read once through the descriptor first: a flash error is an error here, and the release's voice
+  // takes over. Through the mapping it would be a signal, on every start.
+  uint32_t checksum = 0;
+  if (!fileChecksum(fd.get(), size, checksum)) {
     error = std::strerror(errno);
     return nullptr;
   }
-  if (!model->resolve(size, error)) return nullptr;
+  auto mapped = std::make_shared<const posix::MappedFile>(fd.get(), size);
+  if (!mapped->valid()) {
+    error = std::strerror(errno);
+    return nullptr;
+  }
+  std::shared_ptr<SpeechModel> model(new SpeechModel);
+  model->mapped_ = std::move(mapped);
+  const std::string_view file = model->mapped_->bytes();
+  if (!model->resolve(reinterpret_cast<const uint8_t*>(file.data()), file.size(), checksum, error)) return nullptr;
   return model;
 }
 
@@ -231,26 +281,58 @@ std::shared_ptr<const SpeechModel> SpeechModel::parse(const uint8_t* data, std::
   std::shared_ptr<SpeechModel> model(new SpeechModel);
   model->storage_.resize((size + 15) / 16);
   if (size) std::memcpy(model->storage_.data(), data, size);
-  if (!model->resolve(size, error)) return nullptr;
+  const auto* file = reinterpret_cast<const uint8_t*>(model->storage_.data());
+  if (!model->resolve(file, size, size < kHeaderBytes ? 0 : memoryChecksum(file, size), error)) return nullptr;
   return model;
 }
 
-bool SpeechModel::resolve(std::size_t size, std::string& error) {
-  const auto* file = reinterpret_cast<const uint8_t*>(storage_.data());
+namespace {
+
+// The part of a mapped file an utterance reads: all of it but a lexicon at its end, the frontend's.
+// Tensors start on 16 bytes, so the file can end in up to 15 more.
+std::string_view weightsOf(std::string_view file, std::string_view lexicon) {
+  if (lexicon.empty()) return file;
+  const std::size_t start = static_cast<std::size_t>(lexicon.data() - file.data());
+  return file.size() - (start + lexicon.size()) < 16 ? file.substr(0, start) : file;
+}
+
+}
+
+SpeechModel::~SpeechModel() {
+  // The last reader can be the audio thread, and letting go of a file that was replaced or removed
+  // writes to flash: JFFS2 frees it then. That is another thread's wait.
+  std::thread releaser;
+  if (mapped_ && posix::startThread(releaser, [mapped = std::move(mapped_)] {})) releaser.detach();
+}
+
+SpeechModel::Hold::Hold(const SpeechModel& model) : model_(model) {
+  if (!model_.mapped_) return;
+  std::lock_guard<std::mutex> lock(model_.holdMutex_);
+  if (model_.holds_++ == 0) {
+    const std::string_view weights = weightsOf(model_.mapped_->bytes(), model_.frontendLexicon);
+    ::mlock(weights.data(), weights.size());
+  }
+}
+
+SpeechModel::Hold::~Hold() {
+  if (!model_.mapped_) return;
+  std::lock_guard<std::mutex> lock(model_.holdMutex_);
+  if (--model_.holds_ == 0) {
+    const std::string_view weights = weightsOf(model_.mapped_->bytes(), model_.frontendLexicon);
+    ::munlock(weights.data(), weights.size());
+  }
+}
+
+bool SpeechModel::resolve(const uint8_t* file, std::size_t size, uint32_t checksum, std::string& error) {
   const auto fail = [&](std::string reason) {
     error = std::move(reason);
     return false;
   };
   if (size < kHeaderBytes || std::memcmp(file, "ATTS", 4) != 0) return fail("not an ATTS file");
-  if (posix::le32(file + 4) != kVersion) return fail("version " + std::to_string(posix::le32(file + 4)) + " not supported");
+  version = posix::le32(file + 4);
+  if (version != 1 && version != 2) return fail("version " + std::to_string(version) + " not supported");
   if (posix::le32(file + 12) != size) return fail("size mismatch");
-  std::array<uint8_t, 4> stored;
-  std::memcpy(stored.data(), file + 16, 4);
-  uint8_t* field = reinterpret_cast<uint8_t*>(storage_.data()) + 16;
-  std::memset(field, 0, 4);
-  const uint32_t crc = crc32(file, size);
-  std::memcpy(field, stored.data(), 4);
-  if (crc != posix::le32(stored.data())) return fail("checksum mismatch");
+  if (checksum != posix::le32(file + kChecksumAt)) return fail("checksum mismatch");
 
   const uint32_t count = posix::le32(file + 20);
   const uint64_t header = (kHeaderBytes + uint64_t{kEntryBytes} * count + 15) / 16 * 16;
@@ -260,7 +342,8 @@ bool SpeechModel::resolve(std::size_t size, std::string& error) {
   fftSize = posix::le32(file + 32);
   mels = posix::le32(file + 36);
   if (sampleRate != kSampleRate) return fail("sample rate " + std::to_string(sampleRate) + " not supported");
-  if (posix::le32(file + 40) != kTokenContract)
+  // Token contract 1 is the English frontend of v1 files; 2 is the frontend a v2 file carries.
+  if (posix::le32(file + 40) != version)
     return fail("token contract " + std::to_string(posix::le32(file + 40)) + " not supported");
   if (posix::le32(file + 44) != 0) return fail("flags not supported");
   if (fftSize < 16 || fftSize > 4096 || (fftSize & (fftSize - 1)) || !hop || hop > fftSize)
@@ -293,7 +376,12 @@ bool SpeechModel::resolve(std::size_t size, std::string& error) {
   const std::size_t d = config[DEnc], p = config[DPred], e = config[DDec], v = config[VocDim];
   maxDuration = config[MaxDuration];
   vocoderInKernel = config[VocInKernel];
-  if (!tensors.matrix("am.phone", kPhones, d, phones) || !tensors.matrix("am.stress", kStresses, d, stresses) ||
+  phoneCount = version == 1 ? kV1Phones : tensors.rows("am.phone");
+  if (phoneCount == 1 || phoneCount > kMaxPhones) return fail("tensor am.phone: wrong shape");
+  if (version == 2 && (!tensors.bytes("pack.info", true, info) || !tensors.bytes("fe.text", true, frontendText) ||
+                       !tensors.bytes("fe.lexicon", false, frontendLexicon)))
+    return false;
+  if (!tensors.matrix("am.phone", phoneCount, d, phones) || !tensors.matrix("am.stress", kStresses, d, stresses) ||
       !tensors.matrix("am.wordend", kWordEnds, d, wordEnds) ||
       !tensors.matrix("am.punct", kPunctuations, d, punctuations))
     return false;

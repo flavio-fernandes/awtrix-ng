@@ -500,47 +500,8 @@ curl -X POST http://<awtrix-ip>/api/v1/audio/play \
 <!-- only tc002 -->
 ## Speech
 
-A clock with a voice reads English text aloud. Your clock has a voice when
-`speech` is `true` under `audio` in
-[`GET /api/v1/capabilities`](../reference/http.md#get-apiv1capabilities).
-
-```bash
-curl -X POST http://<awtrix-ip>/api/v1/audio/play \
-  -H 'Content-Type: application/json' \
-  -d '{"speech":"Good morning. It is 7:30 and 21° outside."}'
-```
-
-A notification can speak too. The text on the display and the spoken text are separate:
-
-<!-- panel motion=4 -->
-```bash
-curl -X POST http://<awtrix-ip>/api/v1/notifications \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Door open","sound":{"speech":"The front door is open."}}'
-```
-
-The display shows `Door open`, and the clock says the whole sentence.
-
-On a clock without a voice, that notification shows without sound. To play a sound there instead,
-give a list: `"sound":[{"speech":"The front door is open."},"ding"]`.
-
-How the clock reads the text:
-
-- Up to 512 bytes of text. A plain letter is one byte. A letter with an accent, or a sign like
-  `°`, is two or three.
-- Letters with accents are read without them: `Café` sounds like `cafe`.
-- Numbers are read as words: `23.5` is "twenty three point five", `-5` is "minus five".
-- Times are read as times: `7:05` is "seven oh five", `12:00` is "twelve o'clock".
-- `%`, `&` and `°` are read as "percent", "and" and "degrees".
-- `.`, `,`, `?`, `!`, `;`, `:` and a new line make a short pause.
-- Anything else, emoji for example, is skipped.
-- A very long text stops after the last word that fits.
-
-While [Home Assistant Voice](voice.md) uses the speaker, the clock does not speak.
-
-If the clock does not speak, check that the text contains words and fits within 512 bytes.
-The clock also needs speech support and an available speaker. The exact responses are listed in
-[Audio playback errors](../reference/errors.md#audio-playback).
+The clock reads text aloud, in English or in the language of a voice pack. See
+[Speech & voices](speech.md).
 
 <!-- /only -->
 ## Repeat a sound

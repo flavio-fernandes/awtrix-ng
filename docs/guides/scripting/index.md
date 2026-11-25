@@ -173,12 +173,14 @@ follow the link. In the editor, **Ctrl-.** lists every call.
 | [Letting the user change something](storage.md#settings-the-user-can-change) | a `# @config` line, then `store.get()` |
 | [Handing values to another app](several-apps.md#talking-to-other-apps) | `shared.set()` `shared.get()` `shared.age()` `shared.keys()` |
 | [Sharing code between apps](several-apps.md#sharing-code-between-scripts) | a `# @module` file, then `import` |
-| [Fetching from the internet](network.md#http) | `http.get()` `http.post()` `http.put()` `http.patch()` `http.delete()` `http.request()` |
+| [Fetching from the internet](network.md#http) | `http.get()` `http.post()` `http.put()` `http.patch()` `http.delete()` `http.request()` `http.cancel()` |
 | [Picking a value out of a reply](network.md#regular-expressions) | `re.search()` `re.match()` `re.matchall()`, or `json.load()` |
 | [Home automation](network.md#mqtt) | `mqtt.publish()` `mqtt.subscribe()` |
 | [Reading a Modbus device](../modbus.md) | `modbus.readHoldingRegisters()` `modbus.readInputRegisters()` `modbus.readCoils()` `modbus.readDiscreteInputs()` |
 <!-- only tc002 -->
 | [Talking to a line-based service](../tcp.md) | `tcp.connect()` `tcp.send()` `tcp.close()` |
+| [Keeping an API key out of the script](network.md#api-keys) | a `# @secret` line, then `{secret:key}`, `secret.has()` and `secret.allows()` |
+| [Recording and playing voice](../voice-scripts.md) | `voice.record()` `voice.send()` `voice.fetch()` `voice.play()`, and `on_assistant()` to answer the knob and "Hey AWTRIX" |
 | [Signing in to a service](../oauth.md) | a `# @oauth` line, then `oauth.ready()` `oauth.get()` `oauth.post()` `oauth.request()` |
 | [Checksums and signatures](../hashing.md#hashing) | `crypto.sha256()` `crypto.hmac_sha256()` `crypto.pbkdf2_hmac_sha256()` `crypto.random()` |
 | [Mining Bitcoin](../hashing.md#proof-of-work) | `crypto.mine()` `crypto.mine_stop()` `crypto.mine_rate()` `crypto.mine_best()` |
@@ -216,7 +218,7 @@ follow the link. In the editor, **Ctrl-.** lists every call.
 
 **What needs an `import`.** The drawing, time and number calls are plain functions. `http`, `mqtt`,
 `store`, `shared`, `settings`, `sensor`, `display`, `sound`, <!-- only esp32-s3 tc002 -->`music`, <!-- /only -->`rotation`, `timer` and `re`
-are ready to use. `modbus`, <!-- only tc002 -->`gamepad`, `ble`, `tcp`, `crypto`, `oauth`, `layout`, <!-- /only -->the general modules
+are ready to use. `modbus`, <!-- only tc002 -->`gamepad`, `ble`, `tcp`, `crypto`, `oauth`, `layout`, `voice`, `secret`, <!-- /only -->the general modules
 `json`, `string` and `math`, and your own [modules](several-apps.md#sharing-code-between-scripts) need an `import` line at the top of
 the file.
 
@@ -402,12 +404,18 @@ them.
 | `on_button_event(btn, event)` | a press, hold or release of a button your app took. See [Button events](time-buttons-sensors.md#button-events) | no |
 <!-- only tc002 -->
 | `on_knob(event)` | the knob was turned or pressed while your app is shown. Return `true` to take it. See [The knob](time-buttons-sensors.md#the-knob) | no |
+| `on_assistant(trigger)` | your app is the voice assistant and was just opened. `trigger` is `"wake"`, `"knob"`, `"mqtt"` or `"api"`. See [Voice in scripts](../voice-scripts.md#answer-the-knob-and-wake-word) | no |
 <!-- /only -->
 | `should_show()` | the rotation moves on to your app. Return `false` to skip this turn. See [Skip a turn](several-apps.md#sitting-a-round-out) | no |
 | `duration()` | your app appears. Return milliseconds to set how long it stays. See [Stay longer](several-apps.md#setting-your-own-dwell-time) | no |
 
 - **`init()` or `setup()`?** Give members their starting values in `init()`. Do first fetches
   and logging in `setup()`. Your [store](storage.md#storage) is ready in both.
+- **`draw()` can run before the first `loop()`.** `init()` and `setup()` always run before the
+  first frame. `loop()` keeps its own once-a-second pace, so after you save or after a restart
+  your app can be shown before its first `loop()` has run. Give every member that
+  `draw()` reads a starting value in `init()`. If that value needs the work of `loop()`, call
+  `self.loop()` once at the end of `setup()`.
 <!-- only esp32 esp32-s3 -->
 - After a reboot, the apps start their first `loop()` a couple of seconds apart, so they do not
   all fetch in the same second.
@@ -448,6 +456,7 @@ script. Every button of the **Scripts** tab is in [The web UI](../../getting-sta
 <!-- only tc002 -->
 - [TCP in scripts](../tcp.md) and [Hashing and mining in scripts](../hashing.md): the modules
   for line-based services, signatures and Bitcoin mining
+- [Voice in scripts](../voice-scripts.md): record, send and play voice
 <!-- /only -->
 - [MQTT](../mqtt.md): AWTRIX's own topics
 - [Limits](../../reference/limits.md#scripting): every limit a script runs under, in one table

@@ -325,7 +325,8 @@ along.
 
 ## Speech
 
-A clock with a voice reads English text aloud:
+A clock with a voice reads text aloud, in English or in the language of an
+[uploaded voice pack](../speech.md#another-voice-or-language):
 
 ```berry
 # @needs audio.speech
@@ -347,12 +348,16 @@ return TalkingClock()
 ```
 
 - The text is a string. Build it with `str()` and `format()`, as above.
-- The clock reads it as described in [Speech](../sounds.md#speech): up to 512 bytes, numbers and
+- The clock reads it as described in [Speech](../speech.md#how-the-clock-reads-text): up to 512 bytes, numbers and
   times as words, emoji skipped.
 - Speech is a single sound like an MP3. The next sound replaces it, `sound.stop()` stops it, and
   `sound.playing()` is `true` while it speaks.
 - On a clock without a voice, `sound.play()` returns `false`. Give a list to play something else
   there: `sound.play([{'speech': 'Door open'}, 'doorbell'])`.
+<!-- only tc002 -->
+- To play speech from a service on the internet, or to record what someone says, use
+  [`voice.fetch` and `voice.play`](../voice-scripts.md#fetch-audio-and-play-it).
+<!-- /only -->
 - Empty text, or text longer than 512 bytes, raises a `value_error`. On a clock with a voice, so
   does text with nothing to read, for example `'...'`.
 
@@ -538,6 +543,11 @@ end
 `music.playing()` reports playback only, whatever input is selected. It does not detect voices or
 room sound. So for a microphone visualizer, do not hide the app with a `should_show()` based on
 `music.playing()`.
+
+**The microphone listens only for the app on the display.** Reading `music.bands()`,
+`music.level()`, `music.beat()` or `music.pitch()` in `draw()` switches it on. In `loop()`, a timer
+or a button handler, the same calls answer what the microphone hears for the app on the display, and
+zeros while no app on the display listens. An app that is hidden cannot use the microphone.
 <!-- /only -->
 
 A spectrum display takes one line. `bar_chart()` with `autoscale` off draws a fixed 0-to-8 range,
@@ -630,10 +640,7 @@ It listens to the same **Music source** as the other readings. With Automatic, a
 script plays is heard instead of the singer, so a singing game stays quiet while someone sings.
 Declare `# @needs microphone` for a script that cannot work without the microphone.
 
-It answers `0.0`:
-
-- for silence, noise, several notes at once, or a note outside 70 to 1600 Hz;
-- while the voice assistant is listening.
+It answers `0.0` for silence, noise, several notes at once, or a note outside 70 to 1600 Hz.
 
 Call it in `draw()`, not in `loop()`. The first reading comes a fraction of a second after the
 first call.
@@ -768,5 +775,8 @@ Every sound limit is in [Limits](../../reference/limits.md#sounds-and-radio).
 <!-- only esp32-s3 tc002 -->
 - [Song text](../../reference/songs.md): instruments and notes in a string
 - [Internet radio](../radio.md): the stations `music` reads
+<!-- /only -->
+<!-- only tc002 -->
+- [Voice in scripts](../voice-scripts.md): record what someone says, and play speech from a service
 <!-- /only -->
 - [Controlling the device](device.md#notifications): a sound together with a notification

@@ -1,8 +1,9 @@
 #pragma once
 
 #include <cstddef>
-#include <deque>
+#include <list>
 #include <mutex>
+#include <utility>
 
 namespace awtrix::script {
 
@@ -18,7 +19,8 @@ using AsyncQueueLock = std::mutex;
 #endif
 
 // Hands results from the network task to the script host on the main loop. Bounded and
-// lossy by design: the producer must never block on a script that is slow to drain.
+// lossy by design: the producer must never block on a script that is slow to drain. A list because
+// these are empty nearly always, and a std::deque keeps a map and a whole node even then.
 template <typename T, std::size_t Cap>
 class AsyncQueue {
  public:
@@ -39,7 +41,7 @@ class AsyncQueue {
 
  private:
   AsyncQueueLock m_;
-  std::deque<T> q_;
+  std::list<T> q_;
 };
 
 }

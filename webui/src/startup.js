@@ -17,6 +17,7 @@ new ResizeObserver(setChromeH).observe(topbar);
     await ensureCaps();
     //linux:begin
     if(S.oauth&&/^#oauth(_error)?=/.test(location.hash))oauthReturn();
+    if(S.activation&&!S.ap)askActivation();
     //linux:end
     nav();
   }catch(e){}

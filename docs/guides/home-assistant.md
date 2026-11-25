@@ -240,7 +240,7 @@ Pressing one acts at once:
 <!-- /only -->
 <!-- only tc002 -->
 | Stop sound | Stops every sound, the radio included. |
-| Assist | Starts [Home Assistant Voice](voice.md#start-it-from-home-assistant), as if you held the knob. |
+| Assist | Starts the [voice assistant](voice.md#start-it-from-home-assistant), as if you held the knob. |
 <!-- /only -->
 
 ### Sensors
@@ -523,5 +523,5 @@ you do not have to type them again when you switch MQTT back on.
   broker and discovery field.
 - [Device state](../reference/device.md): what `<P>/state/device` contains.
 <!-- only tc002 -->
-- [Home Assistant Voice](voice.md): talk to Assist through your clock.
+- [Voice assistant](voice.md): talk to Assist through your clock.
 <!-- /only -->

@@ -169,8 +169,9 @@ to the shared log (`/api/v1/logs`). Each call into a script is capped at the
 VM's instruction limit and returns to the main loop, which feeds the watchdog.
 Holding **A and C** (left and right) for three seconds at power-on turns
 scripting off and shows `NOSCR`, the ESP32's rescue combo. Script `http.*`
-requests and Modbus reads, which share their request path, return `false`: the
-Pico has no script HTTP worker yet.
+requests and Modbus reads, which share their request path, fail at once: the
+callback gets `nil, 0` (Modbus: `nil, -1`), because the Pico has no script HTTP
+worker yet.
 
 The boot, display and tone lines reach the shared log too. The PIO, state
 machine and DMA claims are verbose: `/api/v1/logs` shows them only with
